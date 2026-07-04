@@ -89,7 +89,7 @@ contains a single copy (see `logos_rln_gifter.nimble`).
 
 ## Working example
 
-The [logos-rln-mix-sim](https://github.com/adklempner/logos-rln-mix-sim)
+The [logos-rln-mix-sim](https://github.com/logos-co/logos-rln-mix-sim)
 five-node simulation runs the full flow on a live testnet: relay1 mounts the
 gifter and allocates memberships to four clients over this protocol, then the
 mix exchange runs with per-hop RLN proofs against the gifted memberships.
