@@ -1,0 +1,6 @@
+nimcache/
+build/
+result*
+tests/nim.cfg
+*.dylib
+*.so
