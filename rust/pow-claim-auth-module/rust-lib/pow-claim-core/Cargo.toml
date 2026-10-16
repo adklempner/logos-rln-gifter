@@ -1,0 +1,27 @@
+[package]
+name = "pow-claim-core"
+version = "0.1.0"
+edition = "2021"
+description = "Producer logic for the RLN gifter `pow-claim` auth vector (PoC)"
+publish = false
+
+[lib]
+name = "pow_claim_core"
+
+# Standalone: the parent rust-lib/Cargo.toml excludes this crate.
+[workspace]
+
+[features]
+default = ["strict-ownership"]
+# Path B ownership requires the Transfer to spend NoteId(minted utxo); needs Poseidon2.
+strict-ownership = ["dep:logos-blockchain-poseidon2", "dep:ark-ff"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+blake2 = "0.10"
+ureq = { version = "2", default-features = false }
+# Pinned to node 0.3.0-rc.5; ark versions match that workspace (0.5).
+logos-blockchain-poseidon2 = { git = "https://github.com/logos-blockchain/logos-blockchain", rev = "2c652646d74354b2877620bf0bc53b4c4d3f18e4", optional = true }
+ark-ff = { version = "0.5", default-features = false, optional = true }

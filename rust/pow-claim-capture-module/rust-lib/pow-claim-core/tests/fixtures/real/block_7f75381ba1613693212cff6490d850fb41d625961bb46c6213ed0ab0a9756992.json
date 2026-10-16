@@ -1,0 +1,91 @@
+{
+ "header": {
+  "id": "7f75381ba1613693212cff6490d850fb41d625961bb46c6213ed0ab0a9756992",
+  "parent_block": "733c598ccfa7ef7b27da78a297d35b172e1c19575b03c71f1a23969f98ed8ee9",
+  "slot": 13112243,
+  "body_root": "deb1dd7109e8932037f8fbece5e53a680eb54441ec7af5c45d0ada497bab8b6e",
+  "proof_of_leadership": {
+   "proof": "73d677d78bd473821ea18afb911ffde2ea748d179d96802de370b31d47f4631b336ca42b376da0b4f4f345a91e7de6bc95997b981674c347aa4010697d49910a5a29eaa1402f4c9c2e1309344ce14a27f68157b5052e387c45e9818285b75f825d6165abeb11b2158db12448655d01d557b259f45f123e08288614673f899509",
+   "entropy_contribution": "d006f71f118074c74b4b04648d88c18322ffb16e555825816806824040e0880f",
+   "leader_key": "64dd8788a2e3047d770cb85decef5dd51b8fd0e91a75a78235c3055c2b6cfec6",
+   "voucher_cm": "32c132d790778fb5e86254caa7e2dc3259060d6833a22995fec9ee655426ed06"
+  }
+ },
+ "uncle_headers": [],
+ "transactions": [
+  {
+   "mantle_tx": {
+    "hash": "cc8c8954e30d4d0f54f54255fdf136b2e3d425c7df0e4ecabdb701635d901393",
+    "ops": [
+     {
+      "opcode": 64,
+      "payload": {
+       "epoch_nonce": "2d2ddf918544bca603c5a291c7dd1b902d6769ff4b00021506780e075c06051a",
+       "block_hash": [
+        115,
+        60,
+        89,
+        140,
+        207,
+        167,
+        239,
+        123,
+        39,
+        218,
+        120,
+        162,
+        151,
+        211,
+        91,
+        23,
+        46,
+        28,
+        25,
+        87,
+        91,
+        3,
+        199,
+        31,
+        26,
+        35,
+        150,
+        159,
+        152,
+        237,
+        142,
+        233
+       ],
+       "public_key": "91f7e9ebfb3e921e2bc7041e73af1218804e8b6f6db025eb0149c5292cdf2a26"
+      }
+     },
+     {
+      "opcode": 0,
+      "payload": {
+       "inputs": [
+        "1e8021be6a7711ff5b7738e14161c41789004733141b3e66bcfaaf59255b4f2e"
+       ],
+       "outputs": [
+        {
+         "value": 999108,
+         "pk": "e3635f207984ae779cf76b5f20714b514373f61ff96260879fe0a6d71f2dce07"
+        }
+       ]
+      }
+     }
+    ]
+   },
+   "ops_proofs": [
+    {
+     "None": null
+    },
+    {
+     "ZkSig": {
+      "pi_a": "063db78d5d88d16026adedcba31c63b5db811b97b6bbd6ebe47ac0662a47ee18",
+      "pi_b": "4b79671b279c152e2b26cbceb2284d8508c097e9cb17f407358822f5cddc70247495f961ed934c29a5130eadc0449ef3519f6d24c476d9eac97ae14ff4274b04",
+      "pi_c": "6189f0ce7cb349693f662fbd3535598d25169444e1c498d6b29c3beb83bd270c"
+     }
+    }
+   ]
+  }
+ ]
+}

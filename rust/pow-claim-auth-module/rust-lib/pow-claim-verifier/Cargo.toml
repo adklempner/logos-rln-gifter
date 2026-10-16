@@ -1,0 +1,23 @@
+[package]
+name = "pow-claim-verifier"
+version = "0.1.0"
+edition = "2021"
+description = "Verifier logic for the RLN gifter `pow-claim` auth vector (PoC)"
+publish = false
+
+[lib]
+name = "pow_claim_verifier"
+
+# Standalone: the parent rust-lib/Cargo.toml excludes this crate.
+[workspace]
+
+[dependencies]
+pow-claim-core = { path = "../pow-claim-core" }
+# Same rev for groth16 and poseidon2 (node 0.3.0-rc.5); ark 0.5 matches that workspace.
+logos-blockchain-groth16 = { git = "https://github.com/logos-blockchain/logos-blockchain", rev = "2c652646d74354b2877620bf0bc53b4c4d3f18e4" }
+logos-blockchain-poseidon2 = { git = "https://github.com/logos-blockchain/logos-blockchain", rev = "2c652646d74354b2877620bf0bc53b4c4d3f18e4" }
+ark-ff = { version = "0.5", default-features = false }
+blake2 = "0.10"
+hex = "0.4"
+serde_json = "1"
+rln_auth_vector = { git = "https://github.com/logos-co/logos-rln-gifter", rev = "79b90eef9423ce6a9000182a2d343be7eacd8d6b", package = "rln_auth_vector" }
