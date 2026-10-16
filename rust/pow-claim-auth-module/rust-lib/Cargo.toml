@@ -1,0 +1,21 @@
+[package]
+name = "pow_claim_auth_module"
+version = "0.1.0"
+edition = "2021"
+
+# pow-claim-core is a verbatim copy of the capture module's crate, synced by
+# tools/pow-claim-poc/build-module.sh — never edit it here.
+[workspace]
+exclude = ["pow-claim-core", "pow-claim-verifier"]
+
+[lib]
+crate-type = ["staticlib"]
+
+[profile.release]
+panic = "abort"
+
+[dependencies]
+serde_json = "1"
+rln_auth_vector = { git = "https://github.com/logos-co/logos-rln-gifter", rev = "79b90eef9423ce6a9000182a2d343be7eacd8d6b", package = "rln_auth_vector" }
+logos-rust-sdk = { path = "../logos-rust-sdk-src" }
+pow-claim-verifier = { path = "pow-claim-verifier" }
