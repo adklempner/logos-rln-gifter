@@ -1,0 +1,37 @@
+# tools/allocator/docker/client-compose.yml — a CLIENT of the allocator, in
+# the same image, for the machine that will register through it.
+#
+#   ./build-bundles.sh                      # portable bundles for this arch
+#   cp client.env.example client.env        # ALLOCATOR_PEER_ID / _MULTIADDR
+#   docker compose -f client-compose.yml run --rm client
+#
+# Exit 0: the allocator answered over libp2p (reply printed). Exit 2: no
+# connectivity. Nothing is published on the host; the client only dials out.
+name: rln-allocator-client
+services:
+  client:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: rln-allocator:local
+    container_name: rln_allocator_client
+    entrypoint: ["/usr/local/lib/allocator/client-entrypoint.sh"]
+    # Optional: verify-local.sh D8 passes everything with -e and needs none.
+    env_file:
+      - path: client.env
+        required: false
+    # host.docker.internal serves HTTP URLs (pow-claim node_url); a same-host
+    # allocator is dialled at the gateway IPv4 (getent ahostsv4
+    # host.docker.internal), never by name.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - client-data:/var/lib/allocator-client
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  client-data: {}

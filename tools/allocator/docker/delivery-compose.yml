@@ -1,0 +1,55 @@
+# tools/allocator/docker/delivery-compose.yml — a DELIVERY node whose RLN
+# membership comes from the allocator, in the same image as the probe client.
+#
+#   ./build-bundles.sh                          # portable bundles for this arch
+#   cp delivery.env.example delivery.env        # pick one of its blocks
+#   docker compose -f delivery-compose.yml up -d --build
+#   docker compose -f delivery-compose.yml logs -f
+#
+# Long-running: it registers once (delegated register_membership through the
+# allocator), then sends (DELIVERY_ROLE=sender) and prints what it receives.
+# The volume holds the RLN keystore — the membership SECRET — plus the lez
+# wallet and the session: `down -v` orphans the membership for good.
+#
+# Host ports: DELIVERY_HOST_TCP / DELIVERY_HOST_DISCV5 are read by compose
+# from the shell or a .env file next to this one (NOT from delivery.env).
+# Keep them at 30303 / 9000 when DELIVERY_EXTIP is set: the node advertises
+# its container ports. On the allocator's own host, 9000/tcp is the
+# allocator; 9000/udp (discv5) is free.
+name: rln-delivery-client
+services:
+  delivery-client:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: rln-allocator:local
+    container_name: rln_delivery_client
+    entrypoint: ["/usr/local/lib/allocator/client-entrypoint.sh"]
+    environment:
+      CLIENT_MODE: delivery
+    env_file:
+      - path: delivery.env
+        required: true
+    # host.docker.internal serves HTTP URLs (pow-claim node_url); a same-host
+    # allocator is dialled at the gateway IPv4 (getent ahostsv4
+    # host.docker.internal), never by name.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${DELIVERY_HOST_TCP:-30303}:30303/tcp"
+      - "${DELIVERY_HOST_TCP:-30303}:30303/udp"
+      - "${DELIVERY_HOST_DISCV5:-9000}:9000/udp"
+    volumes:
+      - delivery-data:/var/lib/allocator-client
+    restart: unless-stopped
+    # A logosctl call in flight (<= CALL_TIMEOUT) delays the TERM trap that
+    # stops the daemon cleanly.
+    stop_grace_period: 75s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  delivery-data: {}
