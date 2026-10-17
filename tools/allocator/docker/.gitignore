@@ -1,0 +1,9 @@
+bundles/*.lgx
+allocator.env
+client.env
+config/allowlist.txt
+runs/
+node/node.env
+node/deployment.yaml
+__pycache__/
+delivery.env
