@@ -6,7 +6,7 @@ authenticated clients, so a client never holds funds or signs its own
 registration — and its RLN identity secret never leaves its machine.
 
 The protocol covers transport and authentication only. On-chain registration is
-delegated to `liblogos_rln_module`; RLN proof generation and verification
+delegated to `liblogos_lez_rln_module`; RLN proof generation and verification
 (LIP-144) live elsewhere.
 
 ## Modules
@@ -22,7 +22,8 @@ delegated to `liblogos_rln_module`; RLN proof generation and verification
   - `serve(args_json)` — gifter side. Mounts `/logos/rln/membership/1.0.0`,
     authenticates each request through the configured vector's `verify_auth`
     module, and registers the commitment on-chain via
-    `liblogos_rln_module.register_member` on a single serialized worker.
+    `liblogos_lez_rln_module.register_member` on a single serialized worker,
+    and answers once the registry shows the membership.
 - **Auth vector modules** — see [Authentication](#authentication):
   `keycard-capture-module` (producer, PC/SC — separate so a headless gifter
   needs no `pcsclite`; also `card_status()` for UIs), `keycard-auth-module`
@@ -47,8 +48,8 @@ client                                     gifter (funded wallet)
   |    identityCommitment,                   |-- 1. authenticate (below)
   |    auth payload:  ---------------------> |
   |    per the selected auth vector          |-- 2. register_member on
-  |  }                                       |      liblogos_rln_module, which
-  |                                          |      funds and signs the tx
+  |  }                                       |      liblogos_lez_rln_module,
+  |                                          |      which funds and signs the tx
   |  RlnGifterResponse {                     |
   |    leafIndex, merkleRoot,      <-------- |
   |    blockNumber, transactionHash }        |
@@ -90,21 +91,30 @@ Reference vectors in this repo:
   `config.trusted_cas`, verifies the challenge signature, and returns the
   once-per-card nullifier `keccak256(ident_pub)` — stable across factory
   resets, so each card claims exactly one membership.
-- **Eth allowlist / EIP-191** (`eth-auth-module` verifies; producing means
-  `personal_sign`ing the lowercase hex of the 32-byte commitment with any
-  wallet and passing it via `authPayload`). The verifier recovers the signer,
-  checks `config.allowlist`, and returns the address as the nullifier — one
-  membership per address, persisted like every other nullifier.
+- **Eth allowlist / EIP-191** (`eth-auth-module` verifies, `eth-sign-module`
+  produces). The payload is a `personal_sign` over the lowercase hex of the
+  32-byte commitment: any wallet can make it and pass it via `authPayload`,
+  or the client names `eth_sign_module` as `authProvider` and it signs with
+  a module-owned key persisted under the module's data dir (`address` tells
+  the operator what to allowlist; `auth_args.private_key` overrides the key
+  for scripts). The verifier recovers the signer, checks `config.allowlist`,
+  and returns the address as the nullifier — one membership per address,
+  persisted like every other nullifier.
 
 Authentication gates only the client↔gifter exchange; RLN proofs are untouched.
 
 ## Registration
 
 The protocol never touches a chain itself. The gifter hands
-`(identityCommitment, rateLimit)` to `liblogos_rln_module.register_member`,
-which funds and signs the transaction, and relays the allocation (`leafIndex`,
-`merkleRoot`, `blockNumber`, `transactionHash`) — or an error — back to the
-client verbatim.
+`(identityCommitment, rateLimit)` to `liblogos_lez_rln_module.register_member`,
+which funds the transaction from the account `serve` names as `wallet` and
+signs it. That call answers when the transaction is accepted, and on LEZ
+v0.3.0 the tree assigns the leaf, so the gifter then reads the membership back
+(`get_membership`) and replies with the leaf the chain holds
+(`leafIndex`, `transactionHash` of the submitted transaction). A registration
+not on chain within 150 s is answered as a failure that says it may still
+land; an authenticated credential stays spent in that case, and is released
+only when nothing was submitted.
 
 ## Layout
 
@@ -114,6 +124,7 @@ client verbatim.
 | `rust/keycard-capture-module/` | keycard vector, producer half: client-side PC/SC capture (`produce_auth`) + `card_status` |
 | `rust/keycard-auth-module/` | keycard vector, verifier half: attestation verify (`verify_auth`), no PC/SC |
 | `rust/eth-auth-module/` | eth-allowlist vector, verifier half: EIP-191 recover + allowlist (`verify_auth`) |
+| `rust/eth-sign-module/` | eth-allowlist vector, producer half: EIP-191 signing with a module-owned key (`produce_auth`, `address`, `import_key`) |
 | `crates/rln-auth-vector/` | the auth-vector contract kit: request/reply types, `AuthVector` trait, dispatch glue |
 | `crates/keycard-attest/` | attestation verify: TLV parse, CA recovery, challenge binding, nullifier |
 | `crates/keycard-client/` | PC/SC keycard transport: secure channel + `IDENTIFY_CARD` |
@@ -127,6 +138,8 @@ Each module is a Logos cdylib module built with Nix, producing an `.lgx`:
 ```bash
 nix build ./rust/rln-gifter-module#lgx
 nix build ./rust/keycard-capture-module#lgx
+nix build ./rust/eth-auth-module#lgx      # allocator side
+nix build ./rust/eth-sign-module#lgx      # client side
 ```
 
 The shared crates build as part of each module (fetched via the git dependency),
@@ -135,7 +148,9 @@ and can be checked on their own with `cargo test` from the repo root.
 ## Runtime requirements
 
 - `rln_gifter_module` loads alongside `libp2p_module` (transport) and
-  `liblogos_rln_module` (identity generation and on-chain registration). A gifter
-  needs a funded wallet; a client needs neither funds nor a wallet.
+  `liblogos_lez_rln_module` (on-chain registration). A gifter needs a funded
+  payer; a client needs neither funds nor a wallet. A client's RLN identity
+  comes from `liblogos_rln_module`, which calls the gifter for delegated
+  registration.
 - `keycard_capture_module` needs a PC/SC stack (`pcsclite`) and a card reader on
   the client.
