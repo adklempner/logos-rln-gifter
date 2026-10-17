@@ -1,0 +1,5 @@
+runs/
+allocator-home/
+docker/runs/
+docker/allocator.env
+.DS_Store
