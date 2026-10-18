@@ -155,27 +155,42 @@ cd_load() {
 try:
     print(" ".join("%s@%s" % (m["name"], m.get("version","")) for m in json.load(sys.stdin) if m.get("status") == "loaded"))
 except Exception: print("?")')"
-    cd_eth_address
+    cd_allowlist_identity
 }
 
-# eth-allowlist: print the address the operator must allowlist (the probe's
-# logic; a private_key in CLIENT_AUTH_ARGS is imported so it is the signer).
-cd_eth_address() {
-    local pk addr
-    [ "$CD_PRODUCER" = eth_sign_module ] || return 0
+# allowlist types: print the id the operator must allowlist (the probe's
+# logic; a private_key in CLIENT_AUTH_ARGS is imported for eth/lez so it is
+# the signer, otherwise identity reads it, with the args for logos).
+cd_allowlist_identity() {
+    local pk meth req res id
+    [ "$CD_PRODUCER" = allowlist_sign_module ] || return 0
     pk=$(ARGS="$AUTH_ARGS" python3 -I -c 'import json, os
 try: print(json.loads(os.environ["ARGS"]).get("private_key", "") or "")
 except Exception: print("")')
+    case "$AUTH_TYPE" in eth-allowlist|lez-allowlist) ;; *) pk="" ;; esac
     if [ -n "$pk" ]; then
-        addr=$(al_field "$(al_call eth_sign_module import_key "$pk" | al_res)" address)
+        meth=import_key
+        req=$(AT="$AUTH_TYPE" PK="$pk" python3 -I -c 'import json, os
+print(json.dumps({"auth_type": os.environ["AT"], "private_key": os.environ["PK"]}, separators=(",", ":")))')
     else
-        addr=$(al_res_field eth_sign_module address address)
+        meth=identity
+        req=$(AT="$AUTH_TYPE" ARGS="$AUTH_ARGS" python3 -I -c 'import json, os
+try: a = json.loads(os.environ["ARGS"]) if os.environ["ARGS"] else {}
+except Exception: a = {}
+a = {k: v for k, v in a.items() if k != "private_key"} if isinstance(a, dict) else {}
+print(json.dumps({"auth_type": os.environ["AT"], "args": a}, separators=(",", ":")))')
     fi
-    if [ -n "$addr" ]; then
-        al_say "eth-allowlist address (the operator allowlists this): $addr${pk:+ (from CLIENT_AUTH_ARGS private_key)}"
-    else
-        al_say "WARNING: eth_sign_module reported no address"
+    res=$(al_call allowlist_sign_module "$meth" "$req" | al_res) || res=""
+    id=$(al_field "$res" id)
+    if [ -z "$id" ]; then
+        al_say "WARNING: allowlist_sign_module.$meth ($AUTH_TYPE) reported no id: ${res:-<no reply>}"
+        return 0
     fi
+    case "$AUTH_TYPE" in
+        lez-allowlist) al_say "lez-allowlist account id (the operator allowlists this): $(al_field "$res" id_base58) (hex $id)${pk:+ (from CLIENT_AUTH_ARGS private_key)}" ;;
+        logos-allowlist) al_say "logos-allowlist public key (the operator allowlists this): $id (source $(al_field "$res" source))" ;;
+        *) al_say "eth-allowlist address (the operator allowlists this): $id${pk:+ (from CLIENT_AUTH_ARGS private_key)}" ;;
+    esac
 }
 
 # ---------------------------------------------------------------- events

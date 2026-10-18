@@ -10,7 +10,10 @@ re-issues `serve` on every start, and serves up to five auth vectors at once:
 a trusted CA; `KEYCARD_TRUSTED_CAS`) and **eth-allowlist** (addresses from
 `allowlist.txt`, re-served on edit), **logos-allowlist** (a tester's
 logos-blockchain node key, `allowlist-logos.txt`) and **lez-allowlist** (a LEZ
-account id, `allowlist-lez.txt`).
+account id, `allowlist-lez.txt`). The three allowlist vectors are verified by
+one module, `allowlist_auth_module` (bundle `allowlist-auth-module.lgx`), and
+produced on the tester side by one module, `allowlist_sign_module`
+(`allowlist-sign-module.lgx`).
 
 Written for a macOS Intel host whose node runs through
 `logos-blockchain/deployment/compose.run.yml` (API published on `18080/tcp`).
@@ -60,9 +63,9 @@ pow-claim.
 ```sh
 cd tools/allocator/docker
 ./build-bundles.sh
-ls bundles/      # rln-gifter-module.lgx eth-auth-module.lgx pow-claim-auth-module.lgx
-                 # keycard-auth-module.lgx
-                 # eth-sign-module.lgx pow-claim-capture-module.lgx  (the last two are for testers)
+ls bundles/      # rln-gifter-module.lgx keycard-auth-module.lgx pow-claim-auth-module.lgx
+                 # allowlist-auth-module.lgx
+                 # allowlist-sign-module.lgx pow-claim-capture-module.lgx  (the last two are for testers)
                  # the pow-claim-* bundles exist only with feat/pow-claim-auth-vector checked out
 ```
 
@@ -136,15 +139,17 @@ pipeline work up to the chain.
 
 ## 5. Add testers
 
-- **eth-allowlist**: a tester sends you the address their `eth_sign_module`
-  reports; append it to `config/allowlist.txt` and save. The entrypoint re-serves
+- **eth-allowlist**: a tester sends you the `id` (an address) their
+  `allowlist_sign_module` reports for
+  `identity '{"auth_type":"eth-allowlist"}'` (testers doc recipe A); append it to `config/allowlist.txt` and save. The entrypoint re-serves
   within `HEALTH_EVERY_S` (30 s): `docker compose logs --tail 5 allocator`
   shows `re-serving`. Each address yields one membership.
-- **logos-allowlist**: the tester runs `logos_sign_module.public_key` against
-  their own node (testers doc recipe D) and sends you the 64-hex key; append it
+- **logos-allowlist**: the tester runs `allowlist_sign_module.identity` with
+  `{"auth_type":"logos-allowlist","args":{"node_url":…}}` against their own node (testers doc recipe D) and sends you the 64-hex key; append it
   to `config/allowlist-logos.txt`. Same re-serve; one membership per key.
-- **lez-allowlist**: the tester runs `lez_sign_module.account_id` (recipe E)
-  and sends the base58 (or hex) id; append it to `config/allowlist-lez.txt`.
+- **lez-allowlist**: the tester runs `allowlist_sign_module.identity` with
+  `{"auth_type":"lez-allowlist"}` (recipe E) and sends `id_base58` (or the hex
+  `id`); append it to `config/allowlist-lez.txt`.
   One membership per account.
 - **pow-claim**: nothing to configure per tester. They need a node that mines
   on the chain `POW_NODE_URL` follows and a settled reward claim; the verifier
@@ -158,6 +163,12 @@ give them that file, `allocator.json`, and the producer bundles from
 `bundles/` (linux bundles load only in the Docker client; a native macOS
 tester needs darwin builds from you, and `keycard-capture-module` is not
 built by `build-bundles.sh`: see §8.1).
+
+A tester who used the earlier `eth_sign_module` keeps their allowlisted
+address only by importing that key into the new module:
+`logosctl call allowlist_sign_module import_key '{"auth_type":"eth-allowlist","private_key":"0x…"}'`
+(the old module's key lives in its own persistence directory, which the new
+module does not read). Otherwise allowlist the new `id` they report.
 
 ## 6. Operate
 
@@ -470,6 +481,20 @@ minutes to replay, so the zone was reset and `wallet-home-local` removed).
   list, granted once allowlisted, replay-refused, and a second key listed
   by its 64-hex id was granted too.
 The allocator paid ~74M per grant from the zone's genesis-funded payer.
+
+### 2026-10-18 — consolidated allowlist modules
+
+`allowlist_auth_module` (one verifier for `eth-allowlist`, `logos-allowlist`,
+`lez-allowlist`) and `allowlist_sign_module` (one producer: `produce_auth`,
+`identity`, `import_key`) replaced the six separate modules. Rebuilt image,
+`verify-local.sh` D1–D10 ALL PASS on the local zone (eth grant, logos
+through the follower node answered `credential already used` for the key
+spent by the earlier run, lez grants by base58 and by hex, replay refused),
+`verify-chainless.sh` A1–A12 ALL PASS with all three types served by the
+single verifier instance. Trap: in the chainless script a nested
+`al_field "$(al_call … | al_res)" id` dropped the logos `identity` reply;
+capturing the envelope in a variable first works (kept, with the reply
+dumped to `runs/<ts>/a11a.env.json`).
 
 ## What is still manual / not covered
 

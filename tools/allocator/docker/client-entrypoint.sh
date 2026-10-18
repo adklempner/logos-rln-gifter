@@ -37,7 +37,7 @@ DATA="${CLIENT_DATA:-/var/lib/allocator-client}"
 ALLOCATOR_PEER_ID="${ALLOCATOR_PEER_ID:?ALLOCATOR_PEER_ID is required (allocator.json gifter_peer_id)}"
 ALLOCATOR_MULTIADDR="${ALLOCATOR_MULTIADDR:?ALLOCATOR_MULTIADDR is required (allocator.json gifter_multiaddr)}"
 AUTH_TYPE="${CLIENT_AUTH_TYPE:-eth-allowlist}"
-AUTH_PROVIDER="${CLIENT_AUTH_PROVIDER:-eth_sign_module}"
+AUTH_PROVIDER="${CLIENT_AUTH_PROVIDER:-allowlist_sign_module}"
 AUTH_ARGS="${CLIENT_AUTH_ARGS:-}"
 RATE="${CLIENT_RATE:-100}"
 # A precomputed auth payload (hex, e.g. a keycard attestation TLV) is sent
@@ -100,45 +100,46 @@ PEER=$(al_libp2p_up_any "/ip4/0.0.0.0/tcp/0")
 al_say "client peer id $PEER"
 
 # ---------------------------------------------------------------- producer
-# A private_key in CLIENT_AUTH_ARGS is imported into the module first, so the
-# printed address is the one that will sign (the module's own key is minted
-# fresh when the host gives it no persistence path, which logosctl does for
-# a `run --rm` client; a fixed key keeps the allowlist entry stable).
+# allowlist_sign_module holds the eth- and lez-allowlist keys and drives the
+# logos node's key. A private_key in CLIENT_AUTH_ARGS (eth/lez) is imported
+# first (import_key), so the printed id is the one that will sign (the module
+# key is minted fresh when the host gives it no persistence path, which
+# logosctl does for a `run --rm` client; a fixed key keeps the allowlist entry
+# stable). Otherwise identity reads it; for logos the args (node_url,
+# public_key) go along, and node_url must be reachable from here.
 case "$AUTH_PROVIDER" in
-    eth_sign_module)
+    allowlist_sign_module)
         PK=$(ARGS="$AUTH_ARGS" python3 -I -c 'import json, os
 try: print(json.loads(os.environ["ARGS"]).get("private_key", "") or "")
 except Exception: print("")')
+        case "$AUTH_TYPE" in eth-allowlist|lez-allowlist) ;; *) PK="" ;; esac
         if [ -n "$PK" ]; then
-            ADDR=$(al_field "$(al_call eth_sign_module import_key "$PK" | al_res)" address)
-            [ -n "$ADDR" ] || al_die "eth_sign_module.import_key refused the private_key in CLIENT_AUTH_ARGS"
-            al_say "eth-allowlist address of the supplied key (give this to the allocator operator): $ADDR"
+            IMETHOD=import_key
+            IREQ=$(AT="$AUTH_TYPE" PK="$PK" python3 -I -c 'import json, os
+print(json.dumps({"auth_type": os.environ["AT"], "private_key": os.environ["PK"]}, separators=(",", ":")))')
         else
-            ADDR=$(al_res_field eth_sign_module address address)
-            [ -n "$ADDR" ] || al_die "eth_sign_module.address answered nothing"
-            al_say "eth-allowlist address (give this to the allocator operator): $ADDR — minted per run unless the module has a persistence path; set CLIENT_AUTH_ARGS={\"private_key\":\"0x…\"} for a stable one"
-        fi ;;
-    logos_sign_module)
-        # The key is the tester's own logos-blockchain node's PoWClaim key;
-        # nothing is stored in the module. node_url must be reachable from here.
-        PKRES=$(al_call logos_sign_module public_key "$AUTH_ARGS" | al_res) || PKRES=""
-        ADDR=$(al_field "$PKRES" public_key)
-        [ -n "$ADDR" ] || al_die "logos_sign_module.public_key failed (is node_url in CLIENT_AUTH_ARGS reachable from the container, e.g. http://host.docker.internal:18080, and does the node have exactly one PoWClaim key or public_key given?): ${PKRES:-<no reply>}"
-        al_say "logos-allowlist public key (give this to the allocator operator): $ADDR (source $(al_field "$PKRES" source))" ;;
-    lez_sign_module)
-        PK=$(ARGS="$AUTH_ARGS" python3 -I -c 'import json, os
-try: print(json.loads(os.environ["ARGS"]).get("private_key", "") or "")
-except Exception: print("")')
-        if [ -n "$PK" ]; then
-            LRES=$(al_call lez_sign_module import_key "$PK" | al_res) || LRES=""
-            [ -n "$(al_field "$LRES" account_id)" ] || al_die "lez_sign_module.import_key refused the private_key in CLIENT_AUTH_ARGS: ${LRES:-<no reply>}"
-        else
-            LRES=$(al_call lez_sign_module account_id | al_res) || LRES=""
-            [ -n "$(al_field "$LRES" account_id)" ] || al_die "lez_sign_module.account_id answered nothing: ${LRES:-<no reply>}"
+            IMETHOD=identity
+            IREQ=$(AT="$AUTH_TYPE" ARGS="$AUTH_ARGS" python3 -I -c 'import json, os
+a = json.loads(os.environ["ARGS"]) if os.environ["ARGS"] else {}
+a = {k: v for k, v in a.items() if k != "private_key"} if isinstance(a, dict) else a
+print(json.dumps({"auth_type": os.environ["AT"], "args": a}, separators=(",", ":")))') \
+                || al_die "CLIENT_AUTH_ARGS is not JSON"
         fi
-        ADDR=$(al_field "$LRES" account_id_base58)
-        al_say "lez-allowlist account id (give this to the allocator operator): $ADDR (hex $(al_field "$LRES" account_id))"
-        [ -n "$PK" ] || al_say "minted per run unless the module has a persistence path; set CLIENT_AUTH_ARGS={\"private_key\":\"0x…\"} for a stable one" ;;
+        IRES=$(al_call allowlist_sign_module "$IMETHOD" "$IREQ" | al_res) || IRES=""
+        IERR=$(al_field "$IRES" error)
+        ADDR=$(al_field "$IRES" id)
+        [ -z "$IERR" ] || al_die "allowlist_sign_module.$IMETHOD ($AUTH_TYPE) refused: $IERR"
+        [ -n "$ADDR" ] || al_die "allowlist_sign_module.$IMETHOD ($AUTH_TYPE) answered no id (for logos-allowlist: is node_url in CLIENT_AUTH_ARGS reachable from the container, e.g. http://host.docker.internal:18080, and does the node have exactly one PoWClaim key or public_key given?): ${IRES:-<no reply>}"
+        case "$AUTH_TYPE" in
+            lez-allowlist)
+                al_say "lez-allowlist account id (give this to the allocator operator): $(al_field "$IRES" id_base58) (hex $ADDR)" ;;
+            logos-allowlist)
+                al_say "logos-allowlist public key (give this to the allocator operator): $ADDR (source $(al_field "$IRES" source))" ;;
+            *)
+                al_say "eth-allowlist address (give this to the allocator operator): $ADDR" ;;
+        esac
+        [ -n "$PK" ] || [ "$AUTH_TYPE" = logos-allowlist ] || [ "$(al_field "$IRES" persisted)" = true ] \
+            || al_say "minted per run (no persistence path); set CLIENT_AUTH_ARGS={\"private_key\":\"0x…\"} for a stable one" ;;
 esac
 
 # ---------------------------------------------------------------- request

@@ -42,15 +42,15 @@ cd logos-rln-gifter/tools/allocator/docker
 
 Needs Docker Desktop (compose v2). The build runs inside a `nixos/nix`
 container native to the machine's architecture and produces the bundles the
-image installs (`rln_gifter_module`, `eth_sign_module`, `eth_auth_module`,
-`keycard_auth_module`). The pow-claim modules (`pow_claim_capture_module`,
+image installs (`rln_gifter_module`, `allowlist_sign_module`,
+`allowlist_auth_module`, `keycard_auth_module`). The pow-claim modules (`pow_claim_capture_module`,
 `pow_claim_auth_module`) are on branch `feat/pow-claim-auth-vector` (stacked
 on this one): check it out to build them, or get the operator's bundles.
 `build-bundles.sh` skips them when absent.
 
 ```sh
 ./build-bundles.sh
-ls bundles/     # rln-gifter-module.lgx eth-auth-module.lgx eth-sign-module.lgx
+ls bundles/     # rln-gifter-module.lgx allowlist-auth-module.lgx allowlist-sign-module.lgx
                 # pow-claim-capture-module.lgx pow-claim-auth-module.lgx
                 # keycard-auth-module.lgx
 ```
@@ -73,11 +73,13 @@ docker compose -f client-compose.yml run --rm client
 What it does, and what to expect in the output:
 
 1. starts a `logosctl` daemon, loads `libp2p_module`, `rln_gifter_module`
-   and `eth_sign_module` (the official catalog provides the first, the other
-   two come from your bundles), and prints the loaded modules;
+   and `allowlist_sign_module` (the official catalog provides the first, the
+   other two come from your bundles), and prints the loaded modules;
 2. brings up a libp2p node on an ephemeral port and prints its PeerId;
-3. prints this machine's eth-allowlist address — send it to the operator
-   if you want to go further than connectivity. Set
+3. prints this machine's eth-allowlist address (`allowlist_sign_module`
+   `identity`, or `import_key` when `CLIENT_AUTH_ARGS` carries a
+   `private_key`; for logos-/lez-allowlist the node key K / the base58 account
+   id) — send it to the operator if you want to go further than connectivity. Set
    `CLIENT_AUTH_ARGS={"private_key":"0x…"}` in `client.env` first: a
    `run --rm` client gets a fresh module key (and address) every run
    otherwise, and the operator's allowlist entry would go stale;
@@ -89,7 +91,7 @@ Knobs in `client.env` (the tester procedure for each vector is
 | Knob | What |
 |---|---|
 | `CLIENT_AUTH_TYPE` | vector: `eth-allowlist` (default), `logos-allowlist`, `lez-allowlist`, `pow-claim`, `keycard-attestation`, or `none` |
-| `CLIENT_AUTH_PROVIDER` | producer module: `eth_sign_module`, `logos_sign_module`, `lez_sign_module`, `pow_claim_capture_module`; ignored with `CLIENT_AUTH_PAYLOAD` |
+| `CLIENT_AUTH_PROVIDER` | producer module: `allowlist_sign_module` (default; eth-, logos- and lez-allowlist, picked by `CLIENT_AUTH_TYPE`) or `pow_claim_capture_module`; ignored with `CLIENT_AUTH_PAYLOAD` |
 | `CLIENT_AUTH_ARGS` | producer args. eth and lez: `{"private_key":"0x…"}`. logos: `{"node_url":"http://host.docker.internal:18080","public_key"?:"<64 hex>"}` (your own node; the key it reports is printed for the operator). pow-claim: `{"node_url":"http://host.docker.internal:18080","audience":"","rate_max":100,"claim_block_id":"<hex>","pow_nullifier":"<hex>"}` (testers doc recipe B step 4; `audience` must equal the operator's `POW_AUDIENCE`, currently empty) |
 | `CLIENT_AUTH_PAYLOAD` | raw auth payload hex (provider skipped); e.g. a synthetic keycard attestation from `tools/mint_attest.py` (`verify-local.sh` D8). A real card cannot be used in the container: no PC/SC, see recipe C |
 | `CLIENT_IDENTITY_COMMITMENT` | the commitment a raw payload was minted for; empty = random per run |
@@ -111,9 +113,16 @@ in `client.env` keeps the container up afterwards so you can poke at it:
 ```sh
 docker compose -f client-compose.yml up -d client
 docker compose -f client-compose.yml exec client logosctl status
-docker compose -f client-compose.yml exec client logosctl --json call eth_sign_module address
+docker compose -f client-compose.yml exec client logosctl --json call allowlist_sign_module identity '{"auth_type":"eth-allowlist"}'
 docker compose -f client-compose.yml down
 ```
+
+If you used the earlier `eth_sign_module` and want to keep its allowlisted
+address, import its key into the new module (the old module's key file is
+not read by `allowlist_sign_module`): put it in
+`CLIENT_AUTH_ARGS={"private_key":"0x…"}`, or in a kept container run
+`logosctl call allowlist_sign_module import_key '{"auth_type":"eth-allowlist","private_key":"0x…"}'`.
+logos-allowlist has nothing to import (the key stays in your node).
 
 ## 5. Delivery mode (membership through the gifter, then delivery)
 
@@ -159,7 +168,7 @@ Allocator and auth, reused from the probe:
 | `ALLOCATOR_PEER_ID` | none (required) | the operator's `gifter_peer_id` |
 | `ALLOCATOR_MULTIADDR` | `/ip4/<allocator host ip>/tcp/9000` (placeholder) | the operator's `gifter_multiaddr` (required); IPv4 only |
 | `CLIENT_AUTH_TYPE` | `eth-allowlist` | `eth-allowlist`, `logos-allowlist`, `lez-allowlist`, `pow-claim`, or `none` (open allocator) |
-| `CLIENT_AUTH_PROVIDER` | `eth_sign_module` | producer module: `eth_sign_module`, `logos_sign_module`, `lez_sign_module` or `pow_claim_capture_module` |
+| `CLIENT_AUTH_PROVIDER` | `allowlist_sign_module` | producer module: `allowlist_sign_module` (the three allowlist types) or `pow_claim_capture_module` |
 | `CLIENT_AUTH_ARGS` | empty | producer args (JSON). eth and lez: `{"private_key":"0x<32-byte hex>"}` for a stable allowlisted address / account id; logos: `{"node_url":"http://host.docker.internal:18080"}`; pow-claim: the pinned claim, see the block below |
 | `CLIENT_AUTH_PAYLOAD` | empty | precomputed hex payload instead of a producer; rarely useful here (this mode generates its own commitment, and an attestation is bound to one) |
 | `CLIENT_RATE` | `100` | `rate_limit` of the membership (the allocator caps it) |
@@ -348,7 +357,7 @@ eth-allowlist on the LAN (receiver):
 ALLOCATOR_PEER_ID=16Uiu2HAkwLPo…
 ALLOCATOR_MULTIADDR=/ip4/<allocator host ip>/tcp/9000
 CLIENT_AUTH_TYPE=eth-allowlist
-CLIENT_AUTH_PROVIDER=eth_sign_module
+CLIENT_AUTH_PROVIDER=allowlist_sign_module
 CLIENT_AUTH_ARGS={"private_key":"0x<fresh key>"}
 DELIVERY_ROLE=receiver
 ```

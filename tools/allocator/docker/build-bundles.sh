@@ -10,16 +10,15 @@
 # nixos/nix container on the target host — native amd64 on an Intel Mac,
 # native arm64 on an Apple-silicon one — and asks for `#lgx-portable`.
 #
-# Modules (allocator side first, then the two tester-side producers):
-#   rln-gifter-module  eth-auth-module  keycard-auth-module  pow-claim-auth-module
-#   eth-sign-module    pow-claim-capture-module
-# Also: logos-auth-module lez-auth-module (verifiers), logos-sign-module
-# lez-sign-module (producers).
+# Modules (allocator side first, then the tester-side producers):
+#   rln-gifter-module  keycard-auth-module  pow-claim-auth-module
+#   allowlist-auth-module (eth-, logos-, lez-allowlist verifiers)
+#   allowlist-sign-module (their producers)  pow-claim-capture-module
 # The pow-claim modules are untracked and share rust-lib/pow-claim-core; they
 # are rsync-staged exactly as tools/pow-claim-poc/build-module.sh does (that
 # script is not modified or invoked: its PoC drivers depend on it).
 #
-# Usage: build-bundles.sh [module-dir…]       (default: all ten)
+# Usage: build-bundles.sh [module-dir…]       (default: all six)
 # Env:   BUNDLES_OUT   (default <here>/bundles)
 #        NIX_VOLUME    docker volume for /nix (default rln-allocator-nix); the
 #                      first build fetches the rust toolchain (~10 min), later
@@ -39,7 +38,7 @@ IMAGE="${NIX_IMAGE:-nixos/nix:latest}"
 MODULES=("$@")
 DEFAULTED=0
 [ "${#MODULES[@]}" -gt 0 ] || DEFAULTED=1
-[ "${#MODULES[@]}" -gt 0 ] || MODULES=(rln-gifter-module eth-auth-module keycard-auth-module pow-claim-auth-module logos-auth-module lez-auth-module eth-sign-module pow-claim-capture-module logos-sign-module lez-sign-module)
+[ "${#MODULES[@]}" -gt 0 ] || MODULES=(rln-gifter-module keycard-auth-module pow-claim-auth-module allowlist-auth-module allowlist-sign-module pow-claim-capture-module)
 
 say() { printf 'build-bundles: %s\n' "$*" >&2; }
 die() { say "ERROR: $*"; exit 1; }

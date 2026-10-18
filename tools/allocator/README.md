@@ -8,7 +8,7 @@ identity** so the PeerId you hand to clients survives restarts.
 | File | What |
 |---|---|
 | `run-allocator.sh` | `up` / `serve` / `status` / `down`. Installs bundles, starts the daemon, loads modules in the required order, mints or reuses the node key (locally: `08021220` + 32 random bytes, the libp2p protobuf Secp256k1 envelope; `newPrivateKey` fails on some `libp2p_module` builds), brings libp2p up and **asserts** it listens on the configured address and, on a re-`up`, that the PeerId matches what `allocator.json` already published (`createNode` falls back to defaults silently), waits for the registry wallet, calls `serve`, writes `allocator.json`. |
-| `verify-chainless.sh` | Proves everything short of the chain against the PoC's stub registry module and the real `eth_auth_module` verifier (see below). |
+| `verify-chainless.sh` | Proves everything short of the chain against the PoC's stub registry module and the real `allowlist_auth_module` verifier (see below). |
 | `lib.sh` | daemon / module / libp2p / gifter helpers (vendored from `tools/pow-claim-poc/lib`, which vendored them from `logos-rln-e2e/harness/lib`). |
 
 ## Operator use
@@ -18,15 +18,15 @@ export LOGOSCORE=…/bin/logoscore
 export LIBP2P_LGX=…/logos-libp2p_module-module-lib.lgx
 export GIFTER_LGX=…/logos-rln_gifter_module-module-lib.lgx      # nix build ./rust/rln-gifter-module#lgx
 export LEZ_RLN_LGX=…/logos-liblogos_lez_rln_module-module-lib.lgx
-export EXTRA_LGX=…/logos-eth_auth_module-module-lib.lgx          # your verifier(s)
-export EXTRA_MODULES=eth_auth_module
+export EXTRA_LGX=…/logos-allowlist_auth_module-module-lib.lgx    # your verifier(s)
+export EXTRA_MODULES=allowlist_auth_module
 
 export ALLOCATOR_HOME=/var/lib/rln-allocator          # node_key.hex, consumed_nullifiers.txt, allocator.json, run/
 export LISTEN_ADDR=/ip4/0.0.0.0/tcp/9000
 export ADVERTISE_ADDR=/ip4/203.0.113.7/tcp/9000       # what clients dial; required when binding 0.0.0.0
 export REGISTRY_CONFIG=<registry ConfigState account>
 export PAYER=                                         # "" = the registry module's own payer
-export AUTH_VERIFIERS='{"eth-allowlist":{"module":"eth_auth_module","config":{"allowlist":["0x…"]}}}'
+export AUTH_VERIFIERS='{"eth-allowlist":{"module":"allowlist_auth_module","config":{"allowlist":["0x…"]}}}'
 export DAEMON_ENV="LEZ_RLN_SEQUENCER=https://… LEZ_RLN_TREE_ID_HEX=… LEZ_RLN_PAYER=… LEZ_RLN_PAYER_KEY=…"
 export MIN_NATIVE_BALANCE=5000000000                  # wait until the payer holds this (fee reserve ≫ price)
 
@@ -82,9 +82,11 @@ tools/allocator/verify-chainless.sh      # ~1 min, two local daemons, writes run
 Prerequisites: a logoscore CLI and the libp2p + stub registry bundles from
 `tools/pow-claim-poc/runs/artifacts.env` (or set `LOGOSCORE`, `LIBP2P_LGX`,
 `STUB_LEZ_LGX`), `rust/rln-gifter-module/result-lgx`,
-`rust/eth-auth-module/result-lgx` and `rust/eth-sign-module/result-lgx`
-built (or `GIFTER_LGX`, `ETH_AUTH_LGX`, `ETH_SIGN_LGX`), and Foundry's `cast`
-for the externally signed EIP-191 cases.
+`rust/allowlist-auth-module/result-lgx` and
+`rust/allowlist-sign-module/result-lgx` built (or `GIFTER_LGX`,
+`ALLOWLIST_AUTH_LGX`, `ALLOWLIST_SIGN_LGX`), and Foundry's `cast` for the
+externally signed EIP-191 cases. `LOGOS_NODE_URL` (a logos-blockchain node with
+one PoWClaim key) enables A11.
 
 It brings the allocator up through `run-allocator.sh` with
 `liblogos_lez_rln_module` replaced by the PoC stub (whose `register_member`
@@ -100,8 +102,10 @@ answers non-JSON, so the gifter reports `NotSubmitted`) and asserts:
 | A6 | `down` + `up` on the same home yields the **identical PeerId** |
 | A7 | a client still holding the old `(peer id, multiaddr)` is served after the restart |
 | A8 | `serve` refresh to an open gifter: an unauthenticated request now reaches `register_member` |
-| A9 | the **producer** path: the client daemon's `eth_sign_module.address` is allowlisted by a `serve` refresh, a request with `authProvider:"eth_sign_module"` (no payload, the module signs the commitment during the request) is accepted and reaches `register_member` once; a `cast`-signed foreign key is still refused |
+| A9 | the **producer** path: the client daemon's `allowlist_sign_module.identity` id for eth-allowlist is allowlisted by a `serve` refresh, a request with `authProvider:"allowlist_sign_module"` (no payload, the module signs the commitment during the request) is accepted and reaches `register_member` once; a `cast`-signed foreign key is still refused |
 | A10 | a commitment that is not a canonical BN254 scalar (and a zero one) is refused by the requester before any dial, `invalid_commitment: …`, and the registry module is never called |
+| A11 | logos-allowlist (with `LOGOS_NODE_URL`): `identity` with `{"auth_type":"logos-allowlist","args":{"node_url":…}}` reads the node's key K; unlisted K is refused by name, listed K is accepted and reaches `register_member` |
+| A12 | lez-allowlist: the module's lez key (`identity` → `id` + `id_base58`); unlisted refused by name, listed by base58 and then by hex both accepted. From A9 on every `serve` names `allowlist_auth_module` for each allowlist type it carries |
 
 Not covered, by construction: the registration landing on a registry and the
 client's `pending → active` confirmation. Those need a chain with a funded

@@ -43,11 +43,9 @@ builds it with `nix build ./rust/keycard-capture-module#lgx`).
 
 ```sh
 logosctl install rln-gifter-module.lgx -y
-logosctl install eth-sign-module.lgx -y            # recipe A (Ethereum key)
+logosctl install allowlist-sign-module.lgx -y      # recipes A, D, E (Ethereum key, logos-blockchain node key, LEZ account key)
 logosctl install pow-claim-capture-module.lgx -y   # recipe B (PoW claim; built from branch feat/pow-claim-auth-vector)
 logosctl install keycard-capture-module.lgx -y     # recipe C (Status Keycard; darwin build from the operator)
-logosctl install logos-sign-module.lgx -y          # recipe D (your logos-blockchain node's key)
-logosctl install lez-sign-module.lgx -y            # recipe E (LEZ account key)
 ```
 
 ## 2. Prepare your RLN stack
@@ -77,15 +75,20 @@ once. `logosctl call liblogos_lez_rln_module wallet_status` must reach
 ### Recipe A — Ethereum key (`eth-allowlist`)
 
 ```sh
-logosctl module load eth_sign_module
-logosctl call eth_sign_module address
-# {"address":"0x…","persisted":true}
+logosctl module load allowlist_sign_module
+logosctl call allowlist_sign_module identity '{"auth_type":"eth-allowlist"}'
+# {"auth_type":"eth-allowlist","id":"0x…","persisted":true}
 ```
 
-Send that address to the operator. The module minted the key on first use
-and keeps it under its data directory; the address is stable for your
+Send that address (`id`) to the operator. The module minted the key on first
+use and keeps it under its data directory; the address is stable for your
 installation and grants exactly one membership. Wait for the operator's
 "added" before step 4.
+
+Used the earlier `eth_sign_module`? Its key is not carried over. To keep the
+address the operator already listed, import that key:
+`logosctl call allowlist_sign_module import_key '{"auth_type":"eth-allowlist","private_key":"0x<hex>"}'`
+(the key lands on a command line).
 
 ### Recipe B — PoW reward claim (`pow-claim`)
 
@@ -171,18 +174,18 @@ a blinking reader that is not listed by PC/SC is not enumerated.
 
 You run your own logos-blockchain node with one PoWClaim key; its public key
 is your credential and the node signs for it (the key never leaves the node).
-Install `logos-sign-module.lgx`, then:
+Install `allowlist-sign-module.lgx`, then:
 
 ```sh
-logosctl module load logos_sign_module
-logosctl call logos_sign_module public_key '{"node_url":"http://127.0.0.1:8080"}'
-# {"public_key":"<64 hex>","source":"pow_status"}
+logosctl module load allowlist_sign_module
+logosctl call allowlist_sign_module identity '{"auth_type":"logos-allowlist","args":{"node_url":"http://127.0.0.1:8080"}}'
+# {"auth_type":"logos-allowlist","id":"<64 hex>","persisted":true,"source":"pow_status"}
 ```
 
-Send the `public_key` (K) to the operator and wait for "added". If the node has
+Send the `id` (K) to the operator and wait for "added". If the node has
 more than one PoWClaim key, add `"public_key":"<64 hex>"` to the args. Register
 as in step 4 with `"auth_type":"logos-allowlist"`,
-`"auth_provider":"logos_sign_module"` and `"auth_args":{"node_url":"http://127.0.0.1:8080"}`
+`"auth_provider":"allowlist_sign_module"` and `"auth_args":{"node_url":"http://127.0.0.1:8080"}`
 (from the Docker client use `http://host.docker.internal:18080`). The node
 proves the signature during the request (about 15 s). One key grants one
 membership. Refusals: `not allowlisted` — K is not on the operator's list yet;
@@ -190,20 +193,21 @@ membership. Refusals: `not allowlisted` — K is not on the operator's list yet;
 
 ### Recipe E — LEZ account key (`lez-allowlist`)
 
-Install `lez-sign-module.lgx`, then:
+Install `allowlist-sign-module.lgx`, then:
 
 ```sh
-logosctl module load lez_sign_module
-logosctl call lez_sign_module account_id
-# {"account_id":"<64 hex>","account_id_base58":"…","public_key":"…","persisted":true}
+logosctl module load allowlist_sign_module
+logosctl call allowlist_sign_module identity '{"auth_type":"lez-allowlist"}'
+# {"auth_type":"lez-allowlist","id":"<64 hex>","id_base58":"…","persisted":true}
 ```
 
-Send the `account_id_base58` to the operator and wait for "added". Register as
+Send the `id_base58` to the operator and wait for "added". Register as
 in step 4 with `"auth_type":"lez-allowlist"` and
-`"auth_provider":"lez_sign_module"`; no `auth_args` needed. The key is minted on
+`"auth_provider":"allowlist_sign_module"`; no `auth_args` needed. The key is minted on
 first use and kept under the module's data dir (`persisted:true`); when it says
 `persisted:false` the id changes per run, so pin a key: `logosctl call
-lez_sign_module import_key <32-byte hex>` prints its ids (the key lands on a
+allowlist_sign_module import_key '{"auth_type":"lez-allowlist","private_key":"0x<hex>"}'`
+prints its ids (the key lands on a
 command line), and pass `"auth_args":{"private_key":"0x<hex>"}` in the
 registration. One
 account grants one membership. Refusals: `not allowlisted`,
@@ -224,7 +228,7 @@ Recipe A:
 logosctl call liblogos_rln_module register_membership \
   logos:testnet:fd322d32a46ddf57eece9db8d68e9b722262d1f770760fca63b8cb9e7775b971 \
   5e269b6a19fce081f5808b13442dcbc3522197638dd38df5a28bc4e55236b977 \
-  '[{"key":"rate_limit","value":"100"},{"key":"delegated","value":"true"},{"key":"gifter_peer_id","value":"<PEER>"},{"key":"gifter_multiaddr","value":"<MADDR>"},{"key":"auth_type","value":"eth-allowlist"},{"key":"auth_provider","value":"eth_sign_module"}]'
+  '[{"key":"rate_limit","value":"100"},{"key":"delegated","value":"true"},{"key":"gifter_peer_id","value":"<PEER>"},{"key":"gifter_multiaddr","value":"<MADDR>"},{"key":"auth_type","value":"eth-allowlist"},{"key":"auth_provider","value":"allowlist_sign_module"}]'
 ```
 
 Recipe B: the same with `"auth_type":"pow-claim"`, `"auth_provider":"pow_claim_capture_module"`

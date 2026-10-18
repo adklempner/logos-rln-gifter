@@ -5,7 +5,7 @@
 #
 # Needs: the compose service up (`docker compose up -d --build`), and on the
 # host a nix-built logoscore plus the -dev bundles verify-chainless.sh uses
-# (LOGOSCORE, LIBP2P_LGX, GIFTER_LGX, ETH_SIGN_LGX resolve the same way).
+# (LOGOSCORE, LIBP2P_LGX, GIFTER_LGX, ALLOWLIST_SIGN_LGX resolve the same way).
 # The host port is HOST_PORT from the environment, default 9000, as in
 # compose.yml (the advertised port may be a public/forwarded one).
 #
@@ -18,7 +18,7 @@
 #   D3 `docker compose restart` keeps the PeerId and re-serves
 #   D4 killing the daemon inside the container makes the container restart and
 #      re-serve (PeerId unchanged)
-#   D5 adding this client's eth_sign_module address to allowlist.txt is picked
+#   D5 adding this client's allowlist_sign_module eth address to allowlist.txt is picked
 #      up (re-serve logged) without a restart
 #   D6 an eth-allowlist request from the client passes the verifier and reaches
 #      the registry: a GRANT (leaf_index, nullifier count +1), or "credential
@@ -33,7 +33,7 @@
 #          or refused insufficient_balance
 #      D8c (after a D8b grant) the same card, new commitment: credential
 #          already used
-#   D9 logos-allowlist through the CLIENT CONTAINER: logos_sign_module with
+#   D9 logos-allowlist through the CLIENT CONTAINER: allowlist_sign_module with
 #      node_url http://host.docker.internal:18080 (the follower in ./node, one
 #      PoWClaim key; else SKIP). The key K the client prints is appended to
 #      config/allowlist-logos.txt, the re-serve awaited:
@@ -60,19 +60,19 @@ REPO="$(cd "$AL/../.." && pwd)"
 . "$AL/lib.sh"
 
 POC="$REPO/tools/pow-claim-poc"
-# artifacts.env supplies the libp2p bundle only; its gifter/eth paths are bare
+# artifacts.env supplies the libp2p bundle only; its gifter/signer paths are bare
 # store paths nix GC may have taken, so this repo's result-lgx links win.
 if [ -f "$POC/runs/artifacts.env" ]; then
-    _l="${LIBP2P_LGX:-}"; _g="${GIFTER_LGX:-}"; _e="${ETH_SIGN_LGX:-}"
+    _l="${LIBP2P_LGX:-}"; _g="${GIFTER_LGX:-}"; _e="${ALLOWLIST_SIGN_LGX:-}"
     # shellcheck source=/dev/null
     . "$POC/runs/artifacts.env"
-    LIBP2P_LGX="${_l:-$LIBP2P_LGX}"; GIFTER_LGX="$_g"; ETH_SIGN_LGX="$_e"
+    LIBP2P_LGX="${_l:-$LIBP2P_LGX}"; GIFTER_LGX="$_g"; ALLOWLIST_SIGN_LGX="$_e"
 fi
 LOGOSCORE="${LOGOSCORE:-$POC/runs/logos/bin/logoscore}"
 GIFTER_LGX="${GIFTER_LGX:-$(find "$REPO/rust/rln-gifter-module/result-lgx/" -maxdepth 1 -name "*.lgx" 2>/dev/null | head -1)}"
-ETH_SIGN_LGX="${ETH_SIGN_LGX:-$(find "$REPO/rust/eth-sign-module/result-lgx/" -maxdepth 1 -name "*.lgx" 2>/dev/null | head -1)}"
+ALLOWLIST_SIGN_LGX="${ALLOWLIST_SIGN_LGX:-$(find "$REPO/rust/allowlist-sign-module/result-lgx/" -maxdepth 1 -name "*.lgx" 2>/dev/null | head -1)}"
 export LOGOSCORE
-for v in LOGOSCORE LIBP2P_LGX GIFTER_LGX ETH_SIGN_LGX; do
+for v in LOGOSCORE LIBP2P_LGX GIFTER_LGX ALLOWLIST_SIGN_LGX; do
     eval "[ -e \"\${$v:-}\" ]" || al_die "$v missing: $(eval "printf '%s' \"\${$v:-<unset>}\"")"
 done
 
@@ -189,14 +189,14 @@ fi
 al_say "==== client daemon (host, nix logoscore + -dev bundles)"
 al_install_lgx "$LIBP2P_LGX" "$CLIENT/modules"
 al_install_lgx "$GIFTER_LGX" "$CLIENT/modules"
-al_install_lgx "$ETH_SIGN_LGX" "$CLIENT/modules"
+al_install_lgx "$ALLOWLIST_SIGN_LGX" "$CLIENT/modules"
 al_daemon_start "$CLIENT"
 al_load "$CLIENT" libp2p_module
 al_load "$CLIENT" rln_gifter_module
-al_load "$CLIENT" eth_sign_module
+al_load "$CLIENT" allowlist_sign_module
 al_libp2p_up "$CLIENT" "/ip4/127.0.0.1/tcp/${CLIENT_PORT:-0}" >/dev/null
-ADDR=$(al_field "$(al_call "$CLIENT" eth_sign_module address | al_res)" address)
-[ -n "$ADDR" ] || al_die "no eth_sign_module address"
+ADDR=$(al_field "$(al_call "$CLIENT" allowlist_sign_module identity '{"auth_type":"eth-allowlist"}' | al_res)" id)
+[ -n "$ADDR" ] || al_die "no eth-allowlist id from allowlist_sign_module.identity"
 al_say "client eth address $ADDR"
 # The container dials nothing; the client dials the host-published port.
 DIAL="/ip4/127.0.0.1/tcp/$PORT"
@@ -235,7 +235,7 @@ if ! may_spend; then
 else
     IDC=$(rand_commitment)
     NUL0=$(nul_count)
-    R=$(al_request "$CLIENT" "$(req_json "$IDC" eth-allowlist eth_sign_module)" d6) || R=""
+    R=$(al_request "$CLIENT" "$(req_json "$IDC" eth-allowlist allowlist_sign_module)" d6) || R=""
     NUL1=$(nul_count)
     ok=0; what="unexpected reply"
     if contains "$R" "leaf_index"; then
@@ -252,8 +252,9 @@ fi
 al_say "==== D7 the client routes auth_type verbatim (client-side refusal; the allocator's pow verifier is not exercised here)"
 if contains "$TYPES" pow-claim; then
     IDC=$(rand_commitment)
-    R=$(al_request "$CLIENT" "$(req_json "$IDC" pow-claim eth_sign_module '{"node_url":"http://127.0.0.1:1","audience":"","rate_max":100}')" d7) || R=""
-    # eth_sign_module has no pow-claim producer: the request fails client-side
+    R=$(al_request "$CLIENT" "$(req_json "$IDC" pow-claim allowlist_sign_module '{"node_url":"http://127.0.0.1:1","audience":"","rate_max":100}')" d7) || R=""
+    # allowlist_sign_module has no pow-claim producer (unknown auth_type
+    # 'pow-claim'): the request fails client-side
     # naming the vector, which still proves the client routes auth_type
     # verbatim. A real producer refusal would come from the allocator's
     # verifier instead.
@@ -377,7 +378,7 @@ grant_or_refuse() { # <reply> <nul before> <nul after>
     fi
 }
 
-al_say "==== D9 logos-allowlist (logos_sign_module via the follower node, client container)"
+al_say "==== D9 logos-allowlist (allowlist_sign_module via the follower node, client container)"
 LOGOS_NODE_ARGS='{"node_url":"http://host.docker.internal:18080"}'
 if ! contains "$TYPES" logos-allowlist; then
     skip D9 "logos-allowlist not served (LOGOS_ALLOWLIST=0)"
@@ -385,10 +386,10 @@ elif ! may_spend; then
     skip D9 "registry ref is $REF, not local: a grant spends the payer (ALLOW_SPEND=1 to run)"
 else
     NUL0=$(nul_count)
-    L=$(ct_client d9a logos-allowlist logos_sign_module "$LOGOS_NODE_ARGS"); NUL1=$(nul_count)
+    L=$(ct_client d9a logos-allowlist allowlist_sign_module "$LOGOS_NODE_ARGS"); NUL1=$(nul_count)
     LK=$(log_field d9a 's/.*logos-allowlist public key (give this to the allocator operator): \([0-9a-f]\{64\}\) .*/\1/p')
     if [ -z "$LK" ]; then
-        skip D9 "no key from logos_sign_module (is the follower node up on 18080 with one PoWClaim key?): $(grep -e 'public_key' -e 'ERROR' "$WORK/d9a.log" | tail -1)"
+        skip D9 "no key from allowlist_sign_module (is the follower node up on 18080 with one PoWClaim key?): $(grep -e 'allowlist_sign' -e 'ERROR' "$WORK/d9a.log" | tail -1)"
     else
         # An EMPTY list is answered "allowlist is empty" (operator error by
         # design); a non-empty list without this key answers "not allowlisted".
@@ -398,13 +399,13 @@ else
         check "$ok" D9a "unlisted K ${LK}: ${L:-<no reply, see $WORK/d9a.log>}"
         append_allow logos "$LK" || al_say "D9: no re-serve seen within 120 s"
         NUL0=$(nul_count)
-        L=$(ct_client d9b logos-allowlist logos_sign_module "$LOGOS_NODE_ARGS"); NUL1=$(nul_count)
+        L=$(ct_client d9b logos-allowlist allowlist_sign_module "$LOGOS_NODE_ARGS"); NUL1=$(nul_count)
         grant_or_refuse "$L" "$NUL0" "$NUL1"
         contains "$L" "credential already used" && { what="credential already used (K spent by an earlier run)"; [ "$NUL1" = "$NUL0" ] && ok=1; }
         check "$ok" D9b "$what — ${L:-<no reply, see $WORK/d9b.log>} (nullifiers $NUL0 -> $NUL1)"
         if [ "$GRANTED" = 1 ]; then
             NUL0=$(nul_count)
-            L=$(ct_client d9c logos-allowlist logos_sign_module "$LOGOS_NODE_ARGS"); NUL1=$(nul_count)
+            L=$(ct_client d9c logos-allowlist allowlist_sign_module "$LOGOS_NODE_ARGS"); NUL1=$(nul_count)
             ok=0; contains "$L" "credential already used" && [ "$NUL1" = "$NUL0" ] && ok=1
             check "$ok" D9c "same K, new commitment: ${L:-<no reply, see $WORK/d9c.log>} (nullifiers $NUL0 -> $NUL1)"
         else
@@ -413,7 +414,7 @@ else
     fi
 fi
 
-al_say "==== D10 lez-allowlist (lez_sign_module with a fresh key, client container)"
+al_say "==== D10 lez-allowlist (allowlist_sign_module with a fresh key, client container)"
 if ! contains "$TYPES" lez-allowlist; then
     skip D10 "lez-allowlist not served (LEZ_ALLOWLIST=0)"
 elif ! may_spend; then
@@ -424,35 +425,35 @@ else
     ARGS1="{\"private_key\":\"0x$(cat "$KEY1")\"}"; ARGS2="{\"private_key\":\"0x$(cat "$KEY2")\"}"
     ID_RE='s/.*lez-allowlist account id (give this to the allocator operator): \([1-9A-HJ-NP-Za-km-z]*\) (hex \([0-9a-f]\{64\}\)).*/'
     NUL0=$(nul_count)
-    L=$(ct_client d10a lez-allowlist lez_sign_module "$ARGS1"); NUL1=$(nul_count)
+    L=$(ct_client d10a lez-allowlist allowlist_sign_module "$ARGS1"); NUL1=$(nul_count)
     B58=$(log_field d10a "${ID_RE}\\1/p")
     if [ -z "$B58" ]; then
-        check 0 D10a "no account id printed by the client: $(grep -e 'lez_sign' -e 'ERROR' "$WORK/d10a.log" | tail -1)"
+        check 0 D10a "no account id printed by the client: $(grep -e 'allowlist_sign' -e 'ERROR' "$WORK/d10a.log" | tail -1)"
     else
         ok=0; { contains "$L" "not allowlisted" || contains "$L" "allowlist is empty"; } && [ "$NUL1" = "$NUL0" ] && ok=1
         check "$ok" D10a "unlisted $B58: ${L:-<no reply, see $WORK/d10a.log>}"
         append_allow lez "$B58" || al_say "D10: no re-serve seen within 120 s"
         NUL0=$(nul_count)
-        L=$(ct_client d10b lez-allowlist lez_sign_module "$ARGS1"); NUL1=$(nul_count)
+        L=$(ct_client d10b lez-allowlist allowlist_sign_module "$ARGS1"); NUL1=$(nul_count)
         grant_or_refuse "$L" "$NUL0" "$NUL1"
         check "$ok" D10b "listed (base58): $what — ${L:-<no reply, see $WORK/d10b.log>} (nullifiers $NUL0 -> $NUL1)"
         if [ "$GRANTED" = 1 ]; then
             NUL0=$(nul_count)
-            L=$(ct_client d10c lez-allowlist lez_sign_module "$ARGS1"); NUL1=$(nul_count)
+            L=$(ct_client d10c lez-allowlist allowlist_sign_module "$ARGS1"); NUL1=$(nul_count)
             ok=0; contains "$L" "credential already used" && [ "$NUL1" = "$NUL0" ] && ok=1
             check "$ok" D10c "same account, new commitment: ${L:-<no reply, see $WORK/d10c.log>} (nullifiers $NUL0 -> $NUL1)"
         else
             skip D10c "D10b did not grant"
         fi
         # A second key, allowlisted by the 64-hex form of its account id.
-        L=$(ct_client d10d0 lez-allowlist lez_sign_module "$ARGS2")
+        L=$(ct_client d10d0 lez-allowlist allowlist_sign_module "$ARGS2")
         HEX2=$(log_field d10d0 "${ID_RE}\\2/p")
         if [ -z "$HEX2" ]; then
             check 0 D10d "no account id printed for the second key"
         else
             append_allow lez "$HEX2" || al_say "D10: no re-serve seen within 120 s"
             NUL0=$(nul_count)
-            L=$(ct_client d10d lez-allowlist lez_sign_module "$ARGS2"); NUL1=$(nul_count)
+            L=$(ct_client d10d lez-allowlist allowlist_sign_module "$ARGS2"); NUL1=$(nul_count)
             grant_or_refuse "$L" "$NUL0" "$NUL1"
             check "$ok" D10d "listed (64-hex $HEX2): $what — ${L:-<no reply, see $WORK/d10d.log>} (nullifiers $NUL0 -> $NUL1)"
         fi

@@ -1,5 +1,5 @@
 # logos-allowlist for the allocator: one public key per line, as reported by
-# the tester's `logos_sign_module.public_key` (64 hex, the PoWClaim key of the
+# the tester's `allowlist_sign_module.identity` for logos-allowlist (`id`, 64 hex, the PoWClaim key of the
 # tester's own logos-blockchain node, little-endian as the node prints it; a
 # 0x prefix and uppercase are accepted and normalised). Lines starting with #
 # and blank lines are ignored; other lines are dropped and logged. Each key is

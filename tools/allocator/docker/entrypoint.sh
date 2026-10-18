@@ -16,9 +16,10 @@
 # Sequence: daemon up → modules → libp2p with the persisted key (refuse to run
 # if the PeerId changed: that would orphan every tester) → publish
 # allocator.json BEFORE funding → wait for the lez wallet → serve with up to
-# up to five verifiers (pow-claim if POW_NODE_URL, keycard-attestation unless
+# five verifiers (pow-claim if POW_NODE_URL, keycard-attestation unless
 # KEYCARD_TRUSTED_CAS=none, logos-allowlist unless LOGOS_ALLOWLIST=0,
-# lez-allowlist unless LEZ_ALLOWLIST=0, eth-allowlist always) → supervise.
+# lez-allowlist unless LEZ_ALLOWLIST=0, eth-allowlist always; the three
+# allowlist types are all served by allowlist_auth_module) → supervise.
 # The three allowlist files (eth, logos, lez) are watched by mtime: a change
 # to any of them re-serves. The daemon
 # dies → exit 1 → compose restarts the container and this script re-serves
@@ -144,9 +145,8 @@ ctl_daemon_start
 VERIFIER_MODULES=""
 [ -z "$POW_NODE_URL" ] || VERIFIER_MODULES="$VERIFIER_MODULES pow_claim_auth_module"
 [ "$KEYCARD_CAS_JSON" = "[]" ] || VERIFIER_MODULES="$VERIFIER_MODULES keycard_auth_module"
-[ "$LOGOS_ALLOWLIST" = 0 ] || VERIFIER_MODULES="$VERIFIER_MODULES logos_auth_module"
-[ "$LEZ_ALLOWLIST" = 0 ] || VERIFIER_MODULES="$VERIFIER_MODULES lez_auth_module"
-VERIFIER_MODULES="$VERIFIER_MODULES eth_auth_module"
+# allowlist_auth_module verifies eth-, logos- and lez-allowlist (one load).
+VERIFIER_MODULES="$VERIFIER_MODULES allowlist_auth_module"
 ctl_load libp2p_module
 ctl_load liblogos_lez_rln_module
 for m in $VERIFIER_MODULES; do ctl_load "$m"; done
@@ -298,13 +298,13 @@ serve_json() {
     LOGOS_ON="$LOGOS_ALLOWLIST" LOGOS_KEYS="$(read_allowlist_logos)" \
     LEZ_ON="$LEZ_ALLOWLIST" LEZ_IDS="$(read_allowlist_lez)" python3 -I -c '
 import json, os
-av = {"eth-allowlist": {"module": "eth_auth_module",
+av = {"eth-allowlist": {"module": "allowlist_auth_module",
                         "config": {"allowlist": json.loads(os.environ["ALLOW"])}}}
 if os.environ["LOGOS_ON"] != "0":
-    av["logos-allowlist"] = {"module": "logos_auth_module",
+    av["logos-allowlist"] = {"module": "allowlist_auth_module",
                              "config": {"allowlist": json.loads(os.environ["LOGOS_KEYS"])}}
 if os.environ["LEZ_ON"] != "0":
-    av["lez-allowlist"] = {"module": "lez_auth_module",
+    av["lez-allowlist"] = {"module": "allowlist_auth_module",
                            "config": {"allowlist": json.loads(os.environ["LEZ_IDS"])}}
 if os.environ["NODE"]:
     av["pow-claim"] = {"module": "pow_claim_auth_module", "config": {

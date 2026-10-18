@@ -1,5 +1,5 @@
 # lez-allowlist for the allocator: one LEZ account id per line, as reported by
-# the tester's `lez_sign_module.account_id` (the base58 form, or the 64-hex
+# the tester's `allowlist_sign_module.identity` for lez-allowlist (`id_base58`, or the 64-hex
 # form; the verifier decodes both to the same 32 bytes). Lines starting with #
 # and blank lines are ignored; other lines are dropped and logged. Each account
 # id is granted ONE membership (it is the vector's nullifier). Saving this file

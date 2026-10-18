@@ -377,9 +377,9 @@ An "app-specific validator" is therefore: the app ships a verifier module
 
 | `auth_type` | Verifier / producer | Verifier `config` | Nullifier | Sybil-resistant? |
 |---|---|---|---|---|
-| `eth-allowlist` | `eth_auth_module` / `eth_sign_module` (module-owned key under the module's persistence dir; `address` → what to allowlist; `auth_args` `{"private_key"}` overrides; any wallet's `personal_sign` over the lowercase hex commitment also works as a raw `auth_payload`) | `{"allowlist": [addr…]}` | the address | only as far as the allowlist is |
-| `logos-allowlist` | `logos_auth_module` / `logos_sign_module` (signs through the tester's own logos-blockchain node; the module stores no key; `public_key` → what to allowlist; `auth_args` `{"node_url","public_key"?}`) | `{"allowlist": [K…]}`, 64-hex PoWClaim public keys (Docker allocator: `config/allowlist-logos.txt`, `LOGOS_ALLOWLIST`) | K (hex) | only as far as the allowlist is |
-| `lez-allowlist` | `lez_auth_module` / `lez_sign_module` (module-owned secp256k1 key, BIP-340 Schnorr; `account_id` → what to allowlist; `auth_args` `{"private_key"}` overrides) | `{"allowlist": [id…]}`, 64-hex or base58 account ids (Docker allocator: `config/allowlist-lez.txt`, `LEZ_ALLOWLIST`) | the account id (hex) | only as far as the allowlist is |
+| `eth-allowlist` | `allowlist_auth_module` / `allowlist_sign_module` (module-owned key under the module's persistence dir; `identity` `{"auth_type":"eth-allowlist"}` → `id`, what to allowlist; `auth_args` `{"private_key"}` overrides; any wallet's `personal_sign` over the lowercase hex commitment also works as a raw `auth_payload`) | `{"allowlist": [addr…]}` | the address | only as far as the allowlist is |
+| `logos-allowlist` | `allowlist_auth_module` / `allowlist_sign_module` (signs through the tester's own logos-blockchain node; the module stores no key; `identity` with `args` `{"node_url"}` → `id` = K, what to allowlist; `auth_args` `{"node_url","public_key"?}`) | `{"allowlist": [K…]}`, 64-hex PoWClaim public keys (Docker allocator: `config/allowlist-logos.txt`, `LOGOS_ALLOWLIST`) | K (hex) | only as far as the allowlist is |
+| `lez-allowlist` | `allowlist_auth_module` / `allowlist_sign_module` (module-owned secp256k1 key, BIP-340 Schnorr; `identity` → `id` / `id_base58`, what to allowlist; `auth_args` `{"private_key"}` overrides) | `{"allowlist": [id…]}`, 64-hex or base58 account ids (Docker allocator: `config/allowlist-lez.txt`, `LEZ_ALLOWLIST`) | the account id (hex) | only as far as the allowlist is |
 | `keycard-attestation` | `keycard_auth_module` / `keycard_capture_module` (PC/SC) | `{"trusted_cas": [pubkey…]}` (Docker allocator: `KEYCARD_TRUSTED_CAS`, default = Status production CA) | `keccak256(ident_pub)`, one per card | yes (hardware) |
 | `pow-claim` (PoC, untracked `rust/pow-claim-*`) | `pow_claim_auth_module` / `pow_claim_capture_module` | `{"node_url", "audience"?, "min_payout"?, …}` (`docs/auth-pow-claim.md` §5) | per claim | yes (work), incomplete (§6 of that doc) |
 | `chat-installation` (design only) | — | — | — | no, identity only (`docs/auth-chat-installation.md` §7) |
@@ -391,29 +391,33 @@ already supplied its options. A pre-made `auth_payload` therefore cannot be
 bound to the right commitment through the membership module; only
 `auth_provider` (a module the gifter client calls with the freshly minted
 commitment) works there. Both reference vectors now have one: keycard's
-`keycard_capture_module` (a physical card) and eth-allowlist's
-`eth_sign_module` (`rust/eth-sign-module`, added 2026-10-12: the client
-daemon's own secp256k1 key, generated on first use into
+`keycard_capture_module` (a physical card) and the allowlists'
+`allowlist_sign_module` (`rust/allowlist-sign-module`; for eth-allowlist the
+client daemon's own secp256k1 key, generated on first use into
 `<instance_persistence_path>/eth_sign_key.hex`, plaintext, 0600 — demo-grade
-custody; the host must stamp a persistence path or the key is per-run). An
-app-specific vector whose payload binds to the commitment must ship a
-producer half too. Proven chainless by `tools/allocator/verify-chainless.sh`
-A9: the client's `eth_sign_module.address` allowlisted on the allocator, a
-`request` with `authProvider:"eth_sign_module"` reaches `register_member`, and
-a foreign key is still refused.
+custody; the host must stamp a persistence path or the key is per-run). It
+replaced `eth_sign_module` (added 2026-10-12), whose key it does not read: a tester
+keeps an allowlisted address by `import_key`
+(`{"auth_type":"eth-allowlist","private_key":"0x…"}`). An app-specific vector
+whose payload binds to the commitment must ship a producer half too. Proven
+chainless by `tools/allocator/verify-chainless.sh` A9: the client's
+`allowlist_sign_module.identity` id for eth-allowlist allowlisted on the
+allocator, a `request` with `authProvider:"allowlist_sign_module"` reaches
+`register_member`, and a foreign key is still refused.
 
 A raw `auth_payload` works only when the caller also supplies the commitment
 it is bound to, which is what the probe client (`CLIENT_IDENTITY_COMMITMENT`)
 and `verify-local.sh` D8 do.
 
 **The logos and lez allowlists** (`logos-allowlist`, `lez-allowlist`) follow
-eth's pattern: the tester reports an identifier (`logos_sign_module.public_key`,
-`lez_sign_module.account_id`), you append it to
+eth's pattern: the tester reports an identifier (`allowlist_sign_module.identity`
+for the type: K, or the lez `id_base58`), you append it to
 `config/allowlist-logos.txt` / `config/allowlist-lez.txt`, and the entrypoint
 re-serves within 30 s (all three allowlist files are watched). Both are served
 by default even while empty (a WARNING is logged and requests are answered
 `allowlist is empty`); `LOGOS_ALLOWLIST=0` / `LEZ_ALLOWLIST=0` switch them off.
-The bundles `logos-auth-module` and `lez-auth-module` must be in the image. Payload
+One verifier, `allowlist_auth_module` (bundle `allowlist-auth-module.lgx`),
+serves all three allowlist types and must be in the image. Payload
 layouts, digest domains and refusal strings: `docs/auth-allowlists.md`. Proven
 by `verify-chainless.sh` A11/A12 and `verify-local.sh` D9/D10.
 
@@ -521,7 +525,8 @@ Funded versus gifted:
   configuration: an "allocator" step with the peer id, multiaddr, an
   auth-vector picker over `membership.js` `AUTH_VECTORS` (open, keycard,
   eth-allowlist → `eth_sign_module`, whose address the step shows for the
-  operator to allowlist) and optional `auth_args`; one builder
+  operator to allowlist; that producer is now `allowlist_sign_module`, so the
+  UI's eth vector must name it and read `identity` instead of `address`) and optional `auth_args`; one builder
   (`M.delegatedOptions`) emits the RegistryOptions for both the wizard
   (`OnboardingFlow.registerDelegated`) and the expert tab
   (`RegisterView.doRegister`). Its funded path moved from the removed
@@ -802,7 +807,7 @@ Missing:
 - A commitment-bound vector without a producer module cannot be used through
   `liblogos_rln_module` at all, because the commitment is minted after the
   options are fixed (§4.3). Closed for eth-allowlist by `eth_sign_module`
-  (2026-10-12); what remains is the general point — an external wallet
+  (2026-10-12), now `allowlist_sign_module` for all three allowlist types; what remains is the general point — an external wallet
   cannot sign through the membership module without a two-step register
   that returns the commitment before the gifter request — and the demo-grade
   key custody of the new producer (plaintext key file).

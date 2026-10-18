@@ -6,6 +6,24 @@ commitment of THIS request, that they hold a listed credential. The verifier
 returns the credential as the nullifier, so each listed entry yields exactly one
 membership. They differ in who holds the key and what is signed with it.
 
+One module per side serves all three, dispatching on the request's
+`auth_type`: the verifier `allowlist_auth_module` (`rust/allowlist-auth-module`,
+each type keeps its own per-type config in `authVerifiers`) and the producer
+`allowlist_sign_module` (`rust/allowlist-sign-module`). The producer's
+methods:
+
+- `produce_auth(args_json)`: the `rln_auth_vector` ProduceRequest
+  `{"auth_type","id_commitment_hex","args"?}` -> `{"payload_hex"}`.
+- `identity(req_json)`: `{"auth_type","args"?}` ->
+  `{"auth_type","id","persisted"}`, plus `id_base58` (lez) or `source`
+  (logos). `id` is what the operator allowlists. The eth/lez module key is
+  generated on first use.
+- `import_key(req_json)`: `{"auth_type":"eth-allowlist"|"lez-allowlist","private_key":"0x…"}`
+  -> the identity object, after persisting the key. logos-allowlist is refused
+  (the key lives in the node's KMS).
+
+Every reply can be `{"error":"…"}` instead (an unknown `auth_type` among them).
+
 Common rules:
 
 - `idc32` is the 32 raw bytes of the identity commitment (the request's
@@ -30,7 +48,7 @@ Common rules:
 
 | | `eth-allowlist` | `logos-allowlist` | `lez-allowlist` |
 |---|---|---|---|
-| Verifier / producer | `eth_auth_module` / `eth_sign_module` | `logos_auth_module` / `logos_sign_module` | `lez_auth_module` / `lez_sign_module` |
+| Verifier / producer | `allowlist_auth_module` / `allowlist_sign_module` | `allowlist_auth_module` / `allowlist_sign_module` | `allowlist_auth_module` / `allowlist_sign_module` |
 | Who holds the key | the module on the tester's client (file `eth_sign_key.hex`, 0600, under the module's persistence dir), or any wallet | the tester's own logos-blockchain node (its PoWClaim key); nothing is stored in the module | the module on the tester's client (file `lez_sign_key.hex`, 0600, under the persistence dir) |
 | Signature | secp256k1 `personal_sign` (EIP-191) | zero-knowledge signature over the node's key, proved by the node (about 15 s) | BIP-340 Schnorr over secp256k1 |
 | Digest | EIP-191 over the lowercase hex of `idc32` | `sha256("logos/rln/logos-sign/1" \|\| idc32)` | `sha256("logos/rln/lez-sign/1" \|\| idc32)` |
@@ -43,8 +61,13 @@ Common rules:
 ## eth-allowlist
 
 - Signed message: the lowercase hex of `idc32` (no `0x`), `personal_sign`.
-- Producer `eth_sign_module`: `produce_auth`, `address()` -> `{"address","persisted"}`,
-  `import_key(hex)`; `auth_args` `{"private_key":"0x<32-byte hex>"}` overrides.
+- Producer: `identity` with `{"auth_type":"eth-allowlist"}` -> `id` = the
+  lowercase `0x` address; `import_key` with
+  `{"auth_type":"eth-allowlist","private_key":"0x…"}`; `auth_args`
+  `{"private_key":"0x<32-byte hex>"}` signs with that key instead.
+- A key held by the earlier `eth_sign_module` is not read by the new module
+  (it lives in that module's own persistence directory): `import_key` it to
+  keep the allowlisted address.
 - Verifier config: `{"allowlist":["0x…"]}`.
 - Refusals: `signature verification failed` (bad payload / signature),
   `not allowlisted`, `allowlist is empty`.
@@ -55,10 +78,10 @@ Common rules:
   zero-knowledge signature over the digest on request; the producer asks the
   tester's own node over its HTTP API (http only, a local node) and appends the
   key. The private key never leaves the node.
-- Producer `logos_sign_module`: `produce_auth`, `public_key(args_json)` ->
-  `{"public_key","source"}` where source is `args` or `pow_status` (the node's
-  single PoWClaim target; zero or several targets need `public_key` in the
-  args). `auth_args`: `{"node_url":"http://127.0.0.1:8080","public_key"?,"http_timeout_ms"?}`.
+- Producer: `identity` with `{"auth_type":"logos-allowlist","args":{"node_url":…}}`
+  -> `id` = K and `source` = `args` or `pow_status` (the node's single
+  PoWClaim target; zero or several targets need `public_key` in the args);
+  `persisted` is always true. `import_key` is refused. `auth_args`: `{"node_url":"http://127.0.0.1:8080","public_key"?,"http_timeout_ms"?}`.
   From the Docker client the node is `http://host.docker.internal:18080`.
 - Verifier config: `{"allowlist":["<64 hex K>", …]}`; `zksign_vk_path`
   optionally replaces the vendored verification key.
@@ -71,12 +94,13 @@ Common rules:
 
 ## lez-allowlist
 
-- The key is a plain secp256k1 key held by `lez_sign_module`. The account id is
+- The key is a plain secp256k1 key held by `allowlist_sign_module`. The account id is
   `sha256(LEE_PREFIX || xonly)` over the x-only public key, the same derivation
   as a LEZ account; the base58 form is what a LEZ wallet shows.
-- Producer `lez_sign_module`: `produce_auth`, `account_id()` ->
-  `{"account_id","account_id_base58","public_key","persisted"}`, `import_key(hex)`;
-  `auth_args` `{"private_key":"0x<32-byte hex>"}` overrides. Without a
+- Producer: `identity` with `{"auth_type":"lez-allowlist"}` -> `id` = the
+  account id hex and `id_base58`; `import_key` with
+  `{"auth_type":"lez-allowlist","private_key":"0x…"}`; `auth_args`
+  `{"private_key":"0x<32-byte hex>"}` signs with that key instead. Without a
   persistence path the key is per-run; use the override for a stable id.
   `import_key` through the CLI puts the key on a command line.
 - Verifier config: `{"allowlist":["<64 hex or base58>", …]}`, entries
