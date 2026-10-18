@@ -5,8 +5,12 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-/// Minimum timeout for `/wallet/sign/zk` (proving takes ~15 s).
+/// Minimum timeout for `/wallet/sign/zk`. Proving was observed at ~80 ms–1 s
+/// on a local node; the floor leaves room for a loaded or slow host.
 pub const SIGN_MIN_TIMEOUT_MS: u64 = 60_000;
+
+/// Appended to an HTTP 404 from the PoW / zkSign routes.
+pub const OLD_NODE_HINT: &str = "node predates the PoW routes (0.3.0-rc.5 or later required)";
 
 fn agent(timeout_ms: u64) -> ureq::Agent {
     ureq::AgentBuilder::new()
@@ -28,10 +32,18 @@ fn finish(method: &str, path: &str, r: Result<ureq::Response, ureq::Error>) -> R
         }
         Err(ureq::Error::Status(code, resp)) => {
             let body = resp.into_string().unwrap_or_default();
-            Err(format!("node {method} {path}: HTTP {code} {}", body.trim()))
+            Err(status_error(method, path, code, body.trim()))
         }
         Err(e) => Err(format!("node {method} {path}: {e}")),
     }
+}
+
+fn status_error(method: &str, path: &str, code: u16, body: &str) -> String {
+    let mut e = format!("node {method} {path}: HTTP {code} {body}");
+    if code == 404 {
+        e = format!("{} ({OLD_NODE_HINT})", e.trim_end());
+    }
+    e
 }
 
 /// `GET <url>/pow/status` as JSON.
@@ -49,13 +61,15 @@ pub fn sign_zk_body(digest: &[u8; 32], pk_hex: &str) -> Value {
 
 /// `POST <url>/wallet/sign/zk` signing `digest` (raw 32 bytes, reduced mod p
 /// by the node) with the node-held key `pk_hex`; returns `pi_a‖pi_b‖pi_c`.
-/// The timeout is at least [`SIGN_MIN_TIMEOUT_MS`].
+/// `pk_hex` is normalised with [`crate::norm_hex32`] first. The timeout is
+/// at least [`SIGN_MIN_TIMEOUT_MS`].
 pub fn sign_zk(url: &str, digest: &[u8; 32], pk_hex: &str, timeout_ms: u64) -> Result<[u8; 128], String> {
+    let pk = crate::norm_hex32("pk", pk_hex)?;
     let path = "/wallet/sign/zk";
     let r = agent(timeout_ms.max(SIGN_MIN_TIMEOUT_MS))
         .post(&format!("{}{path}", base(url)))
         .set("Content-Type", "application/json")
-        .send_string(&sign_zk_body(digest, pk_hex).to_string());
+        .send_string(&sign_zk_body(digest, &pk).to_string());
     parse_sig_reply(&finish("POST", path, r)?)
 }
 
@@ -129,6 +143,20 @@ mod tests {
     fn sign_body_puts_the_key_alone_in_slot_zero() {
         let b = sign_zk_body(&[0xab; 32], "k1");
         assert_eq!(b, json!({"tx_hash": "ab".repeat(32), "pks": ["k1"]}));
+    }
+
+    #[test]
+    fn http_404_carries_the_old_node_hint() {
+        let e = status_error("POST", "/wallet/sign/zk", 404, "");
+        assert_eq!(e, format!("node POST /wallet/sign/zk: HTTP 404 ({OLD_NODE_HINT})"));
+        let e = status_error("GET", "/pow/status", 500, "boom");
+        assert_eq!(e, "node GET /pow/status: HTTP 500 boom");
+    }
+
+    #[test]
+    fn sign_zk_rejects_a_malformed_key_before_any_request() {
+        let e = sign_zk("http://127.0.0.1:1", &[0; 32], "zz", 500).unwrap_err();
+        assert!(e.starts_with("pk:"), "{e}");
     }
 
     #[test]

@@ -11,7 +11,7 @@
 //!   an operator-supplied one ([`verify::PreparedVk`], [`verify::verify_sig`]).
 //! - feature `client`: plain-http client for a local node
 //!   ([`client::pow_status`], [`client::sign_zk`], [`client::parse_sig_reply`]).
-//! - always: [`norm_hex32`], [`hex32_bytes`].
+//! - always: [`strip_0x`], [`norm_hex32`], [`hex32_bytes`].
 
 #[cfg(feature = "client")]
 pub mod client;
@@ -21,17 +21,19 @@ pub mod verify;
 #[cfg(feature = "client")]
 pub use client::{parse_sig_reply, pow_status, sign_zk, SIGN_MIN_TIMEOUT_MS};
 #[cfg(feature = "verify")]
-pub use verify::{default_vk, verify_sig, zero_pk, zero_pk_le, PreparedVk, DEFAULT_VK_JSON};
+pub use verify::{default_vk, is_canonical_fr, verify_sig, zero_pk, zero_pk_le, PreparedVk, DEFAULT_VK_JSON};
+
+/// `s` trimmed, with at most ONE leading `0x`/`0X` removed (unlike
+/// `trim_start_matches("0x")`, which eats `0x0x…` and misses `0X`).
+pub fn strip_0x(s: &str) -> &str {
+    let t = s.trim();
+    t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")).unwrap_or(t)
+}
 
 /// Normalise a 32-byte hex field: strip optional `0x`/`0X`, lowercase,
 /// require exactly 64 hex chars. `field` names the value in the error.
 pub fn norm_hex32(field: &str, s: &str) -> Result<String, String> {
-    let t = s.trim();
-    let t = t
-        .strip_prefix("0x")
-        .or_else(|| t.strip_prefix("0X"))
-        .unwrap_or(t)
-        .to_ascii_lowercase();
+    let t = strip_0x(s).to_ascii_lowercase();
     if t.len() != 64 || !t.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(format!("{field}: expected 64 hex chars (32 bytes), got {s:?}"));
     }
@@ -59,5 +61,14 @@ mod tests {
         for bad in ["abc".to_string(), "zz".repeat(32), "aa".repeat(33)] {
             assert!(norm_hex32("public_key", &bad).unwrap_err().starts_with("public_key:"));
         }
+        assert!(norm_hex32("k", &format!("0x0x{}", "ab".repeat(31))).is_err(), "only one prefix is stripped");
+    }
+
+    #[test]
+    fn strip_0x_removes_one_prefix_of_either_case() {
+        assert_eq!(strip_0x(" 0xab "), "ab");
+        assert_eq!(strip_0x("0XAB"), "AB");
+        assert_eq!(strip_0x("0x0xab"), "0xab");
+        assert_eq!(strip_0x("ab"), "ab");
     }
 }

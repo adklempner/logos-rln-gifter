@@ -85,8 +85,21 @@ fn non_canonical_key_and_bad_vk_are_reported() {
 }
 
 #[test]
+fn vk_with_the_wrong_public_input_count_is_an_error() {
+    let mut vk: Value = serde_json::from_str(DEFAULT_VK_JSON).unwrap();
+    let ic = vk["IC"].as_array_mut().unwrap();
+    assert_eq!(ic.len(), zksign_light::verify::PUBLIC_INPUTS + 1);
+    ic.pop();
+    vk["nPublic"] = serde_json::json!(32);
+    let e = PreparedVk::from_json(&vk.to_string()).err().unwrap();
+    assert!(e.contains("zkSign vk shape") && e.contains("33 public inputs"), "{e}");
+}
+
+#[test]
 fn zero_pk_le_is_canonical_and_stable() {
     let z = zero_pk_le();
     assert_ne!(z, [0u8; 32]);
+    assert!(zksign_light::is_canonical_fr(&z));
+    assert!(!zksign_light::is_canonical_fr(&[0xff; 32]));
     assert_eq!(z, zero_pk_le());
 }

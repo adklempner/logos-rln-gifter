@@ -16,12 +16,26 @@ use logos_blockchain_poseidon2::{Digest as _, Poseidon2Bn254Hasher};
 /// zkSign verification key bundled with the node at 0.3.0-rc.5 (circuits v0.5.7).
 pub const DEFAULT_VK_JSON: &str = include_str!("../assets/zksign_vk_v0.5.7.json");
 
+/// Public inputs of the zkSign circuit: K, 31 zero-key slots, the digest.
+pub const PUBLIC_INPUTS: usize = 33;
+
 pub struct PreparedVk(Groth16PreparedVerificationKey);
 
 impl PreparedVk {
+    /// Parses and prepares a snarkjs-format VK. A VK for another circuit
+    /// (`IC` must hold `PUBLIC_INPUTS + 1` points) fails here, so a wrong
+    /// operator VK is a config error rather than a reject on every request.
     pub fn from_json(vk_json: &str) -> Result<PreparedVk, String> {
         let de: Groth16VerificationKeyJsonDeser =
             serde_json::from_str(vk_json).map_err(|e| format!("zkSign vk json: {e}"))?;
+        if de.ic.len() != PUBLIC_INPUTS + 1 {
+            return Err(format!(
+                "zkSign vk shape: IC has {} points ({} public inputs), want {} ({PUBLIC_INPUTS} public inputs)",
+                de.ic.len(),
+                de.ic.len().saturating_sub(1),
+                PUBLIC_INPUTS + 1
+            ));
+        }
         let vk = Groth16VerificationKey::try_from(de)
             .map_err(|e| format!("zkSign vk convert: {e:?}"))?;
         Ok(PreparedVk(vk.into_prepared()))
@@ -63,6 +77,12 @@ pub fn zero_pk_le() -> [u8; 32] {
     out
 }
 
+/// Whether `le` is a canonical little-endian BN254 scalar (`< p`), i.e. a
+/// value a node could print as a public key.
+pub fn is_canonical_fr(le: &[u8; 32]) -> bool {
+    fr_from_bytes(le).is_ok()
+}
+
 /// `Ok(())` iff `zksig` is a valid zkSign by `K` over `digest`. Every failure
 /// (non-canonical K, undecodable proof, invalid proof) is a reject reason.
 pub fn verify_sig(
@@ -75,9 +95,9 @@ pub fn verify_sig(
     let comp = CompressedGroth16Proof::from_bytes(zksig);
     let proof = Groth16Proof::try_from(&comp)
         .map_err(|e| format!("zkSign signature invalid (proof decode: {e:?})"))?;
-    let mut inputs = Vec::with_capacity(33);
+    let mut inputs = Vec::with_capacity(PUBLIC_INPUTS);
     inputs.push(k);
-    inputs.extend(std::iter::repeat(zero_pk()).take(31));
+    inputs.extend(std::iter::repeat_n(zero_pk(), PUBLIC_INPUTS - 2));
     inputs.push(Fr::from_le_bytes_mod_order(digest));
     match groth16_verify(&vk.0, &proof, &inputs) {
         Ok(true) => Ok(()),
