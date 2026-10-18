@@ -390,7 +390,9 @@ else
     if [ -z "$LK" ]; then
         skip D9 "no key from logos_sign_module (is the follower node up on 18080 with one PoWClaim key?): $(grep -e 'public_key' -e 'ERROR' "$WORK/d9a.log" | tail -1)"
     else
-        ok=0; contains "$L" "not allowlisted" && [ "$NUL1" = "$NUL0" ] && ok=1
+        # An EMPTY list is answered "allowlist is empty" (operator error by
+        # design); a non-empty list without this key answers "not allowlisted".
+        ok=0; { contains "$L" "not allowlisted" || contains "$L" "allowlist is empty"; } && [ "$NUL1" = "$NUL0" ] && ok=1
         # A key left listed by an earlier run is a legitimate state, not a failure.
         grep -qix "$LK" "$HERE/config/allowlist-logos.txt" 2>/dev/null && ok=1
         check "$ok" D9a "unlisted K ${LK}: ${L:-<no reply, see $WORK/d9a.log>}"
@@ -427,7 +429,7 @@ else
     if [ -z "$B58" ]; then
         check 0 D10a "no account id printed by the client: $(grep -e 'lez_sign' -e 'ERROR' "$WORK/d10a.log" | tail -1)"
     else
-        ok=0; contains "$L" "not allowlisted" && [ "$NUL1" = "$NUL0" ] && ok=1
+        ok=0; { contains "$L" "not allowlisted" || contains "$L" "allowlist is empty"; } && [ "$NUL1" = "$NUL0" ] && ok=1
         check "$ok" D10a "unlisted $B58: ${L:-<no reply, see $WORK/d10a.log>}"
         append_allow lez "$B58" || al_say "D10: no re-serve seen within 120 s"
         NUL0=$(nul_count)

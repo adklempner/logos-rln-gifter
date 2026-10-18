@@ -453,6 +453,24 @@ run shows the gifted membership was obtained and spent on a proof, and the
 message crossed the fleet; Run 1b (`DELIVERY_VALIDATE=1` on B) adds the
 validation.
 
+### 2026-10-18 — logos-allowlist and lez-allowlist on a fresh local zone
+
+Image rebuilt with the four new bundles (`logos_auth_module`,
+`logos_sign_module`, `lez_auth_module`, `lez_sign_module`; all ten
+`linux-arm64`), allocator on a freshly provisioned local zone (wallet ready
+in seconds; a wallet home left over from an older chain had needed many
+minutes to replay, so the zone was reset and `wallet-home-local` removed).
+`verify-local.sh` D1–D10 ALL PASS (D8 skipped: test CA not trusted):
+- D9 (logos): the client container's `logos_sign_module` took the key from
+  the follower node (`/pow/status`, K `e2c2755d…ea08`), the empty list
+  answered `allowlist is empty`, after allowlisting K the request was
+  **granted** (verifier offline against the vendored VK, reply in 2 s),
+  the replay was refused `credential already used: logos-allowlist:<K>`.
+- D10 (lez): a module key's base58 account id was refused on the empty
+  list, granted once allowlisted, replay-refused, and a second key listed
+  by its 64-hex id was granted too.
+The allocator paid ~74M per grant from the zone's genesis-funded payer.
+
 ## What is still manual / not covered
 
 - Funding and keeping the payer topped up; the balance is logged, not alerted.
