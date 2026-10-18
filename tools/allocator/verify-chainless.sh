@@ -139,6 +139,10 @@ al_say "==== client daemon"
 al_install_lgx "$LIBP2P_LGX" "$CLIENT/modules"
 al_install_lgx "$GIFTER_LGX" "$CLIENT/modules"
 al_install_lgx "$ETH_SIGN_LGX" "$CLIENT/modules"
+# logoscore scans the modules dir at daemon start: the A11/A12 producers must
+# be installed now, not when their check runs.
+[ "${HAVE_LOGOS:-0}" = 1 ] && al_install_lgx "$LOGOS_SIGN_LGX" "$CLIENT/modules"
+[ "${HAVE_LEZ:-0}" = 1 ] && al_install_lgx "$LEZ_SIGN_LGX" "$CLIENT/modules"
 al_daemon_start "$CLIENT"
 al_load "$CLIENT" libp2p_module
 al_load "$CLIENT" rln_gifter_module
@@ -267,7 +271,6 @@ if [ "$HAVE_LOGOS" != 1 ]; then
 elif [ -z "${LOGOS_NODE_URL:-}" ]; then
     al_say "SKIP A11: set LOGOS_NODE_URL (a logos-blockchain node with one PoWClaim key, e.g. http://127.0.0.1:8080)"; RESULTS="${RESULTS}A11=skip "
 else
-    al_install_lgx "$LOGOS_SIGN_LGX" "$CLIENT/modules"
     al_load "$CLIENT" logos_sign_module
     NODE_ARGS="{\"node_url\":\"$LOGOS_NODE_URL\"}"
     SIGN_K=$(al_field "$(al_call "$CLIENT" logos_sign_module public_key "$NODE_ARGS" | al_res)" public_key) || SIGN_K=""
@@ -297,7 +300,6 @@ LEZ_B58=""
 if [ "$HAVE_LEZ" != 1 ]; then
     al_say "SKIP A12: lez-auth/lez-sign bundles not found (LEZ_AUTH_LGX, LEZ_SIGN_LGX)"; RESULTS="${RESULTS}A12=skip "
 else
-    al_install_lgx "$LEZ_SIGN_LGX" "$CLIENT/modules"
     al_load "$CLIENT" lez_sign_module
     LEZ_RES=$(al_call "$CLIENT" lez_sign_module account_id | al_res) || LEZ_RES=""
     LEZ_HEX=$(al_field "$LEZ_RES" account_id); LEZ_B58=$(al_field "$LEZ_RES" account_id_base58)
