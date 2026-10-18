@@ -1,0 +1,23 @@
+{
+  "name": "allowlist_sign_module",
+  "version": "0.1.0",
+  "description": "Allowlist producers for gifted RLN registration (rln_auth_vector produce_auth): eth-allowlist (EIP-191) and lez-allowlist (BIP-340) with module-owned keys, logos-allowlist (zkSign) by a logos-blockchain node key",
+  "author": "Logos",
+  "type": "core",
+  "interface": "cdylib",
+  "category": "blockchain",
+  "main": "allowlist_sign_module_plugin",
+  "dependencies": [],
+  "include": [],
+  "capabilities": [],
+
+  "codegen": {
+    "rust": { "crate": "rust-lib", "trait": "AllowlistSignModule" }
+  },
+
+  "nix": {
+    "external_libraries": [],
+    "packages": { "build": [], "runtime": [] },
+    "cmake": { "find_packages": [], "extra_include_dirs": [] }
+  }
+}
