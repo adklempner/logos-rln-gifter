@@ -27,7 +27,9 @@ delegated to `liblogos_lez_rln_module`; RLN proof generation and verification
 - **Auth vector modules** — see [Authentication](#authentication):
   `keycard-capture-module` (producer, PC/SC — separate so a headless gifter
   needs no `pcsclite`; also `card_status()` for UIs), `keycard-auth-module`
-  (verifier), `eth-auth-module` (verifier).
+  (verifier), `eth-auth-module` (verifier), `logos-auth-module` /
+  `lez-auth-module` (verifiers) and `eth-sign-module` / `logos-sign-module` /
+  `lez-sign-module` (producers).
 - **Crates** — `crates/rln-auth-vector` (the vector contract kit every
   module above and any third-party vector imports), `crates/keycard-attest`
   (attestation verify) and `crates/keycard-client` (PC/SC transport), all
@@ -100,6 +102,18 @@ Reference vectors in this repo:
   for scripts). The verifier recovers the signer, checks `config.allowlist`,
   and returns the address as the nullifier — one membership per address,
   persisted like every other nullifier.
+- **Logos allowlist** (`logos-auth-module` verifies, `logos-sign-module`
+  produces; `auth_type` `logos-allowlist`). The key is the tester's own
+  logos-blockchain node's PoWClaim key: the producer has the node sign
+  `sha256("logos/rln/logos-sign/1" || id_commitment)` with a zero-knowledge
+  signature, payload `K(32) || zksig(128)`; the verifier checks K against
+  `config.allowlist` and the signature, and returns K as the nullifier.
+- **LEZ allowlist** (`lez-auth-module` verifies, `lez-sign-module` produces;
+  `auth_type` `lez-allowlist`). A module-owned secp256k1 key signs
+  `sha256("logos/rln/lez-sign/1" || id_commitment)` (BIP-340), payload
+  `xonly(32) || sig(64)`; the nullifier is the LEZ account id (hex), allowlist
+  entries are hex or base58.
+  Details for all three allowlist vectors: [`docs/auth-allowlists.md`](docs/auth-allowlists.md).
 
 Authentication gates only the client↔gifter exchange; RLN proofs are untouched.
 
@@ -125,6 +139,10 @@ only when nothing was submitted.
 | `rust/keycard-auth-module/` | keycard vector, verifier half: attestation verify (`verify_auth`), no PC/SC |
 | `rust/eth-auth-module/` | eth-allowlist vector, verifier half: EIP-191 recover + allowlist (`verify_auth`) |
 | `rust/eth-sign-module/` | eth-allowlist vector, producer half: EIP-191 signing with a module-owned key (`produce_auth`, `address`, `import_key`) |
+| `rust/logos-auth-module/` | logos-allowlist vector, verifier half: zk-signature verify + K allowlist (`verify_auth`) |
+| `rust/logos-sign-module/` | logos-allowlist vector, producer half: asks the tester's logos-blockchain node to sign (`produce_auth`, `public_key`) |
+| `rust/lez-auth-module/` | lez-allowlist vector, verifier half: BIP-340 verify + account-id allowlist (`verify_auth`) |
+| `rust/lez-sign-module/` | lez-allowlist vector, producer half: BIP-340 signing with a module-owned key (`produce_auth`, `account_id`, `import_key`) |
 | `crates/rln-auth-vector/` | the auth-vector contract kit: request/reply types, `AuthVector` trait, dispatch glue |
 | `crates/keycard-attest/` | attestation verify: TLV parse, CA recovery, challenge binding, nullifier |
 | `crates/keycard-client/` | PC/SC keycard transport: secure channel + `IDENTIFY_CARD` |
@@ -140,6 +158,10 @@ nix build ./rust/rln-gifter-module#lgx
 nix build ./rust/keycard-capture-module#lgx
 nix build ./rust/eth-auth-module#lgx      # allocator side
 nix build ./rust/eth-sign-module#lgx      # client side
+nix build ./rust/logos-auth-module#lgx    # allocator side (logos-allowlist)
+nix build ./rust/logos-sign-module#lgx    # client side
+nix build ./rust/lez-auth-module#lgx      # allocator side (lez-allowlist)
+nix build ./rust/lez-sign-module#lgx      # client side
 ```
 
 The shared crates build as part of each module (fetched via the git dependency),

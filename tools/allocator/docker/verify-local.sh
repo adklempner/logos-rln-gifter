@@ -11,7 +11,8 @@
 #
 # Asserts:
 #   D1 allocator.json published with served:true and the expected auth types
-#      (eth-allowlist, and keycard-attestation unless KEYCARD_TRUSTED_CAS=none)
+#      (eth-allowlist; keycard-attestation unless KEYCARD_TRUSTED_CAS=none;
+#      logos-allowlist / lez-allowlist unless LOGOS_ALLOWLIST / LEZ_ALLOWLIST=0)
 #   D2 the published port answers from the host and peerInfo in the container
 #      shows the persisted PeerId
 #   D3 `docker compose restart` keeps the PeerId and re-serves
@@ -32,10 +33,23 @@
 #          or refused insufficient_balance
 #      D8c (after a D8b grant) the same card, new commitment: credential
 #          already used
-# D6 and D8 spend the payer and consume credentials: skipped unless the
-# registry ref is local or ALLOW_SPEND=1. Teardown removes this run's
-# `# verify-local` stamps (and the client address if this run added it) from
-# config/allowlist.txt.
+#   D9 logos-allowlist through the CLIENT CONTAINER: logos_sign_module with
+#      node_url http://host.docker.internal:18080 (the follower in ./node, one
+#      PoWClaim key; else SKIP). The key K the client prints is appended to
+#      config/allowlist-logos.txt, the re-serve awaited:
+#      D9a unlisted K is refused, D9b listed K: GRANT or insufficient_balance,
+#      D9c (after a grant) the same K again: credential already used
+#   D10 lez-allowlist through the client container: a fresh key (openssl rand
+#      -hex 32, kept in this run's dir under runs/) given as CLIENT_AUTH_ARGS
+#      private_key; the base58 account id it prints is appended to
+#      config/allowlist-lez.txt:
+#      D10a unlisted refused, D10b listed (base58): GRANT or insufficient_
+#      balance, D10c (after a grant) replay: credential already used,
+#      D10d a second key listed by its 64-hex account id: GRANT or insufficient
+# D6, D8, D9 and D10 spend the payer and consume credentials: skipped unless
+# the registry ref is local or ALLOW_SPEND=1. Teardown removes this run's
+# `# verify-local` stamps (and the client address / logos key / lez ids if
+# this run added them) from config/allowlist{,-logos,-lez}.txt.
 # Env: CLIENT_PORT (default 0 = ephemeral), KEEP=1 leaves the client daemon up,
 # HOST_PORT (default 9000), ALLOW_SPEND=1.
 set -uo pipefail
@@ -74,6 +88,8 @@ contains() { case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac; }
 # ALLOW_SPEND=1.
 may_spend() { [ "$REF" = local ] || [ "${ALLOW_SPEND:-0}" = 1 ]; }
 ADDR=""; ADDED=0
+# Lines this run appended to the logos / lez allowlists (removed in teardown).
+LOGOS_LINES=""; LEZ_LINES=""
 
 env_get() { sed -n "s/^$1=//p" "$HERE/allocator.env" 2>/dev/null | tail -1 | tr -d "\"' \r"; }
 alloc_json() { $COMPOSE exec -T allocator cat /var/lib/allocator/allocator.json 2>/dev/null; }
@@ -113,6 +129,16 @@ teardown() {
         fi
         rm -f "$al.bak"
     fi
+    local f l
+    for f in logos:$LOGOS_LINES lez:$LEZ_LINES; do
+        al="$HERE/config/allowlist-${f%%:*}.txt"
+        [ -f "$al" ] || continue
+        for l in $(printf '%s' "${f#*:}" | tr ',' ' '); do
+            sed -i.bak "/^$l\$/d" "$al"
+        done
+        sed -i.bak "/^# verify-local /d" "$al"
+        rm -f "$al.bak"
+    done
     if [ "${KEEP:-0}" = 1 ]; then al_say "KEEP=1: client left up ($WORK)"; return; fi
     al_daemon_stop "$CLIENT" || true
     rm -rf "$CLIENT/modules"
@@ -129,6 +155,8 @@ REF=$(al_field "$J" registry_id | cut -d: -f2)
 KC_WANT=1; [ "$(env_get KEYCARD_TRUSTED_CAS | tr 'A-Z' 'a-z')" = none ] && KC_WANT=0
 ok=0; [ -n "$PEER1" ] && contains "$TYPES" eth-allowlist && ok=1
 [ "$KC_WANT" = 0 ] || contains "$TYPES" keycard-attestation || ok=0
+[ "$(env_get LOGOS_ALLOWLIST)" = 0 ] || contains "$TYPES" logos-allowlist || ok=0
+[ "$(env_get LEZ_ALLOWLIST)" = 0 ] || contains "$TYPES" lez-allowlist || ok=0
 check "$ok" D1 "peer $PEER1 @ $MADDR, auth_types $TYPES, registry ref $REF, host port $PORT"
 al_say "==== D2 port reachable from the host; modules loaded in the container"
 # No peerInfo here: it is unreliable once the gifter has mounted (see
@@ -308,6 +336,123 @@ print(1 if os.environ["CA"] in cas else 0)')
             check "$ok" D8c "same card, new commitment: ${L:-<no reply, see $WORK/d8c.log>} (nullifiers $NUL0 -> $NUL1)"
         else
             skip D8c "D8b did not grant"
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------- D9/D10 logos + lez
+# The client container, a producer module and a request; the log keeps the
+# line the client prints for the operator (key / account id) and the reply.
+ct_client() { # <tag> <auth_type> <provider> <args_json> -> reply + RESULT lines
+    $CLIENT_COMPOSE run --rm -T \
+        -e ALLOCATOR_PEER_ID="$PEER1" \
+        -e ALLOCATOR_MULTIADDR="/ip4/${HOST_V4:-192.168.65.254}/tcp/$PORT" \
+        -e CLIENT_AUTH_TYPE="$2" \
+        -e CLIENT_AUTH_PROVIDER="$3" \
+        -e CLIENT_AUTH_ARGS="$4" \
+        -e CLIENT_AUTH_PAYLOAD= \
+        -e CLIENT_IDENTITY_COMMITMENT= \
+        -e CLIENT_KEEP=0 \
+        client > "$WORK/$1.log" 2>&1
+    grep -e "reply after" -e "RESULT:" "$WORK/$1.log" | tail -2 | tr '\n' ' '
+}
+log_field() { # <tag> <sed expr capturing group 1>  — first match in the client log
+    sed -n "$2" "$WORK/$1.log" | head -1
+}
+append_allow() { # <logos|lez> <line>  — append, stamp, wait for the re-serve
+    local f="$HERE/config/allowlist-$1.txt" since
+    since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    printf '%s\n# verify-local %s\n' "$2" "$since" >> "$f"
+    if [ "$1" = logos ]; then LOGOS_LINES="$LOGOS_LINES,$2"; else LEZ_LINES="$LEZ_LINES,$2"; fi
+    wait_log "serve: " 120 "$since"
+}
+# One outcome: ok when it is a grant (nullifiers +1), insufficient_balance or
+# already used (nullifiers unchanged). Sets GRANTED and what.
+grant_or_refuse() { # <reply> <nul before> <nul after>
+    GRANTED=0; ok=0; what="unexpected reply"
+    if contains "$1" "membership granted"; then
+        what="GRANT"; GRANTED=1; [ "$3" = $(($2 + 1)) ] && ok=1
+    elif contains "$1" "insufficient_balance"; then
+        what="insufficient_balance (payer unfunded)"; [ "$3" = "$2" ] && ok=1
+    fi
+}
+
+al_say "==== D9 logos-allowlist (logos_sign_module via the follower node, client container)"
+LOGOS_NODE_ARGS='{"node_url":"http://host.docker.internal:18080"}'
+if ! contains "$TYPES" logos-allowlist; then
+    skip D9 "logos-allowlist not served (LOGOS_ALLOWLIST=0)"
+elif ! may_spend; then
+    skip D9 "registry ref is $REF, not local: a grant spends the payer (ALLOW_SPEND=1 to run)"
+else
+    NUL0=$(nul_count)
+    L=$(ct_client d9a logos-allowlist logos_sign_module "$LOGOS_NODE_ARGS"); NUL1=$(nul_count)
+    LK=$(log_field d9a 's/.*logos-allowlist public key (give this to the allocator operator): \([0-9a-f]\{64\}\) .*/\1/p')
+    if [ -z "$LK" ]; then
+        skip D9 "no key from logos_sign_module (is the follower node up on 18080 with one PoWClaim key?): $(grep -e 'public_key' -e 'ERROR' "$WORK/d9a.log" | tail -1)"
+    else
+        ok=0; contains "$L" "not allowlisted" && [ "$NUL1" = "$NUL0" ] && ok=1
+        # A key left listed by an earlier run is a legitimate state, not a failure.
+        grep -qix "$LK" "$HERE/config/allowlist-logos.txt" 2>/dev/null && ok=1
+        check "$ok" D9a "unlisted K ${LK}: ${L:-<no reply, see $WORK/d9a.log>}"
+        append_allow logos "$LK" || al_say "D9: no re-serve seen within 120 s"
+        NUL0=$(nul_count)
+        L=$(ct_client d9b logos-allowlist logos_sign_module "$LOGOS_NODE_ARGS"); NUL1=$(nul_count)
+        grant_or_refuse "$L" "$NUL0" "$NUL1"
+        contains "$L" "credential already used" && { what="credential already used (K spent by an earlier run)"; [ "$NUL1" = "$NUL0" ] && ok=1; }
+        check "$ok" D9b "$what — ${L:-<no reply, see $WORK/d9b.log>} (nullifiers $NUL0 -> $NUL1)"
+        if [ "$GRANTED" = 1 ]; then
+            NUL0=$(nul_count)
+            L=$(ct_client d9c logos-allowlist logos_sign_module "$LOGOS_NODE_ARGS"); NUL1=$(nul_count)
+            ok=0; contains "$L" "credential already used" && [ "$NUL1" = "$NUL0" ] && ok=1
+            check "$ok" D9c "same K, new commitment: ${L:-<no reply, see $WORK/d9c.log>} (nullifiers $NUL0 -> $NUL1)"
+        else
+            skip D9c "D9b did not grant"
+        fi
+    fi
+fi
+
+al_say "==== D10 lez-allowlist (lez_sign_module with a fresh key, client container)"
+if ! contains "$TYPES" lez-allowlist; then
+    skip D10 "lez-allowlist not served (LEZ_ALLOWLIST=0)"
+elif ! may_spend; then
+    skip D10 "registry ref is $REF, not local: a grant spends the payer (ALLOW_SPEND=1 to run)"
+else
+    KEY1="$WORK/lez-key-1.hex"; KEY2="$WORK/lez-key-2.hex"
+    (umask 077; openssl rand -hex 32 > "$KEY1"; openssl rand -hex 32 > "$KEY2")
+    ARGS1="{\"private_key\":\"0x$(cat "$KEY1")\"}"; ARGS2="{\"private_key\":\"0x$(cat "$KEY2")\"}"
+    ID_RE='s/.*lez-allowlist account id (give this to the allocator operator): \([1-9A-HJ-NP-Za-km-z]*\) (hex \([0-9a-f]\{64\}\)).*/'
+    NUL0=$(nul_count)
+    L=$(ct_client d10a lez-allowlist lez_sign_module "$ARGS1"); NUL1=$(nul_count)
+    B58=$(log_field d10a "${ID_RE}\\1/p")
+    if [ -z "$B58" ]; then
+        check 0 D10a "no account id printed by the client: $(grep -e 'lez_sign' -e 'ERROR' "$WORK/d10a.log" | tail -1)"
+    else
+        ok=0; contains "$L" "not allowlisted" && [ "$NUL1" = "$NUL0" ] && ok=1
+        check "$ok" D10a "unlisted $B58: ${L:-<no reply, see $WORK/d10a.log>}"
+        append_allow lez "$B58" || al_say "D10: no re-serve seen within 120 s"
+        NUL0=$(nul_count)
+        L=$(ct_client d10b lez-allowlist lez_sign_module "$ARGS1"); NUL1=$(nul_count)
+        grant_or_refuse "$L" "$NUL0" "$NUL1"
+        check "$ok" D10b "listed (base58): $what — ${L:-<no reply, see $WORK/d10b.log>} (nullifiers $NUL0 -> $NUL1)"
+        if [ "$GRANTED" = 1 ]; then
+            NUL0=$(nul_count)
+            L=$(ct_client d10c lez-allowlist lez_sign_module "$ARGS1"); NUL1=$(nul_count)
+            ok=0; contains "$L" "credential already used" && [ "$NUL1" = "$NUL0" ] && ok=1
+            check "$ok" D10c "same account, new commitment: ${L:-<no reply, see $WORK/d10c.log>} (nullifiers $NUL0 -> $NUL1)"
+        else
+            skip D10c "D10b did not grant"
+        fi
+        # A second key, allowlisted by the 64-hex form of its account id.
+        L=$(ct_client d10d0 lez-allowlist lez_sign_module "$ARGS2")
+        HEX2=$(log_field d10d0 "${ID_RE}\\2/p")
+        if [ -z "$HEX2" ]; then
+            check 0 D10d "no account id printed for the second key"
+        else
+            append_allow lez "$HEX2" || al_say "D10: no re-serve seen within 120 s"
+            NUL0=$(nul_count)
+            L=$(ct_client d10d lez-allowlist lez_sign_module "$ARGS2"); NUL1=$(nul_count)
+            grant_or_refuse "$L" "$NUL0" "$NUL1"
+            check "$ok" D10d "listed (64-hex $HEX2): $what — ${L:-<no reply, see $WORK/d10d.log>} (nullifiers $NUL0 -> $NUL1)"
         fi
     fi
 fi

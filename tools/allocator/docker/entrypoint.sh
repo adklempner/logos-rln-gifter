@@ -16,8 +16,11 @@
 # Sequence: daemon up → modules → libp2p with the persisted key (refuse to run
 # if the PeerId changed: that would orphan every tester) → publish
 # allocator.json BEFORE funding → wait for the lez wallet → serve with up to
-# three verifiers (pow-claim if POW_NODE_URL, keycard-attestation unless
-# KEYCARD_TRUSTED_CAS=none, eth-allowlist always) → supervise. The daemon
+# up to five verifiers (pow-claim if POW_NODE_URL, keycard-attestation unless
+# KEYCARD_TRUSTED_CAS=none, logos-allowlist unless LOGOS_ALLOWLIST=0,
+# lez-allowlist unless LEZ_ALLOWLIST=0, eth-allowlist always) → supervise.
+# The three allowlist files (eth, logos, lez) are watched by mtime: a change
+# to any of them re-serves. The daemon
 # dies → exit 1 → compose restarts the container and this script re-serves
 # (serve is in-memory on the gifter).
 #
@@ -34,6 +37,10 @@ umask 077
 
 DATA="${ALLOCATOR_DATA:-/var/lib/allocator}"
 ALLOWLIST="${ALLOWLIST_FILE:-/etc/allocator/allowlist.txt}"
+ALLOWLIST_LOGOS="${ALLOWLIST_LOGOS_FILE:-/etc/allocator/allowlist-logos.txt}"
+ALLOWLIST_LEZ="${ALLOWLIST_LEZ_FILE:-/etc/allocator/allowlist-lez.txt}"
+LOGOS_ALLOWLIST="${LOGOS_ALLOWLIST:-1}"
+LEZ_ALLOWLIST="${LEZ_ALLOWLIST:-1}"
 LISTEN_PORT="${LISTEN_PORT:-9000}"
 REGISTRY_CONFIG="${REGISTRY_CONFIG:?REGISTRY_CONFIG (registry ConfigState hex) is required}"
 REGISTRY_REFERENCE="${REGISTRY_REFERENCE:-testnet}"
@@ -137,6 +144,8 @@ ctl_daemon_start
 VERIFIER_MODULES=""
 [ -z "$POW_NODE_URL" ] || VERIFIER_MODULES="$VERIFIER_MODULES pow_claim_auth_module"
 [ "$KEYCARD_CAS_JSON" = "[]" ] || VERIFIER_MODULES="$VERIFIER_MODULES keycard_auth_module"
+[ "$LOGOS_ALLOWLIST" = 0 ] || VERIFIER_MODULES="$VERIFIER_MODULES logos_auth_module"
+[ "$LEZ_ALLOWLIST" = 0 ] || VERIFIER_MODULES="$VERIFIER_MODULES lez_auth_module"
 VERIFIER_MODULES="$VERIFIER_MODULES eth_auth_module"
 ctl_load libp2p_module
 ctl_load liblogos_lez_rln_module
@@ -162,6 +171,8 @@ auth_types_json() {
     local t='['
     [ -z "$POW_NODE_URL" ] || t="$t\"pow-claim\","
     [ "$KEYCARD_CAS_JSON" = "[]" ] || t="$t\"keycard-attestation\","
+    [ "$LOGOS_ALLOWLIST" = 0 ] || t="$t\"logos-allowlist\","
+    [ "$LEZ_ALLOWLIST" = 0 ] || t="$t\"lez-allowlist\","
     printf '%s"eth-allowlist"]' "$t"
 }
 write_out_json() { # <payer> <served:true|false> <funded:true|false>
@@ -237,12 +248,64 @@ except FileNotFoundError:
 print(json.dumps(addrs, separators=(",", ":")))
 PY
 }
+read_allowlist_logos() { # -> JSON array of 64-hex public keys (0x stripped, lowercase)
+    python3 -I - "$ALLOWLIST_LOGOS" <<'PY'
+import json, re, sys
+keys = []
+try:
+    for n, raw in enumerate(open(sys.argv[1]), 1):
+        line = raw.split("#", 1)[0].strip().lower()
+        if not line:
+            continue
+        if line.startswith("0x"):
+            line = line[2:]
+        if re.fullmatch(r"[0-9a-f]{64}", line):
+            if line not in keys:
+                keys.append(line)
+        else:
+            sys.stderr.write("allowlist-logos.txt line %d dropped (not 64 hex): %.20s\n" % (n, raw.strip()))
+except FileNotFoundError:
+    pass
+print(json.dumps(keys, separators=(",", ":")))
+PY
+}
+read_allowlist_lez() { # -> JSON array of account ids (64 hex or base58, passed as given; the verifier decodes)
+    python3 -I - "$ALLOWLIST_LEZ" <<'PY'
+import json, re, sys
+ids = []
+try:
+    for n, raw in enumerate(open(sys.argv[1]), 1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if re.fullmatch(r"(0x)?[0-9a-fA-F]{64}", line):
+            line = line.lower()
+            if line.startswith("0x"):
+                line = line[2:]
+        elif not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,50}", line):
+            sys.stderr.write("allowlist-lez.txt line %d dropped (not 64 hex or base58): %.20s\n" % (n, raw.strip()))
+            continue
+        if line not in ids:
+            ids.append(line)
+except FileNotFoundError:
+    pass
+print(json.dumps(ids, separators=(",", ":")))
+PY
+}
 serve_json() {
     CFG="$REGISTRY_CONFIG" NUL="$NULLIFIERS" MAXR="$MAX_RATE_LIMIT" NODE="$POW_NODE_URL" AUD="$POW_AUDIENCE" \
-    AUDIT="$DATA/pow-claim-audit.jsonl" ALLOW="$(read_allowlist)" CAS="$KEYCARD_CAS_JSON" python3 -I -c '
+    AUDIT="$DATA/pow-claim-audit.jsonl" ALLOW="$(read_allowlist)" CAS="$KEYCARD_CAS_JSON" \
+    LOGOS_ON="$LOGOS_ALLOWLIST" LOGOS_KEYS="$(read_allowlist_logos)" \
+    LEZ_ON="$LEZ_ALLOWLIST" LEZ_IDS="$(read_allowlist_lez)" python3 -I -c '
 import json, os
 av = {"eth-allowlist": {"module": "eth_auth_module",
                         "config": {"allowlist": json.loads(os.environ["ALLOW"])}}}
+if os.environ["LOGOS_ON"] != "0":
+    av["logos-allowlist"] = {"module": "logos_auth_module",
+                             "config": {"allowlist": json.loads(os.environ["LOGOS_KEYS"])}}
+if os.environ["LEZ_ON"] != "0":
+    av["lez-allowlist"] = {"module": "lez_auth_module",
+                           "config": {"allowlist": json.loads(os.environ["LEZ_IDS"])}}
 if os.environ["NODE"]:
     av["pow-claim"] = {"module": "pow_claim_auth_module", "config": {
         "node_url": os.environ["NODE"], "audience": os.environ["AUD"], "min_payout": 0,
@@ -272,7 +335,15 @@ do_serve() {
 # (still a complete libp2p round trip). pow-claim needs no per-tester setup.
 do_serve
 [ "$(read_allowlist)" != "[]" ] || al_say "WARNING: $ALLOWLIST lists no address yet — eth-allowlist requests will be answered 'allowlist is empty' until one is added"
-ALLOW_MTIME=$(stat -c %Y "$ALLOWLIST" 2>/dev/null || echo 0)
+[ "$LOGOS_ALLOWLIST" = 0 ] || [ "$(read_allowlist_logos 2>/dev/null)" != "[]" ] || al_say "WARNING: $ALLOWLIST_LOGOS lists no key yet — logos-allowlist requests will be answered 'allowlist is empty' until one is added"
+[ "$LEZ_ALLOWLIST" = 0 ] || [ "$(read_allowlist_lez 2>/dev/null)" != "[]" ] || al_say "WARNING: $ALLOWLIST_LEZ lists no account id yet — lez-allowlist requests will be answered 'allowlist is empty' until one is added"
+allow_mtimes() { # one token over the three watched files; any change differs
+    local f
+    for f in "$ALLOWLIST" "$ALLOWLIST_LOGOS" "$ALLOWLIST_LEZ"; do
+        printf '%s,' "$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+    done
+}
+ALLOW_MTIME=$(allow_mtimes)
 write_out_json "$PAYER" true false
 al_say "serving $(auth_types_json) on $ADVERTISE_ADDR for registry logos:${REGISTRY_REFERENCE}:${REGISTRY_CONFIG}"
 
@@ -311,9 +382,9 @@ while :; do
             stop_daemon; exit 1
         fi
     fi
-    mt=$(stat -c %Y "$ALLOWLIST" 2>/dev/null || echo 0)
+    mt=$(allow_mtimes)
     if [ "$mt" != "$ALLOW_MTIME" ] || [ "$RESERVE" = 1 ]; then
-        al_say "allowlist changed (or SIGHUP): re-serving"
+        al_say "allowlist (eth/logos/lez) changed (or SIGHUP): re-serving"
         ALLOW_MTIME="$mt"; RESERVE=0
         do_serve
     fi

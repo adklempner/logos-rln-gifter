@@ -4,11 +4,13 @@ One container running `rln_gifter_module` on the released `logosctl`, beside
 a logos-blockchain node that runs the same way. It keeps **one libp2p PeerId
 for its lifetime** (the key is on a volume), publishes the pair testers pin
 (`gifter_peer_id`, `gifter_multiaddr`) before the payer is even funded,
-re-issues `serve` on every start, and serves three auth vectors at once:
+re-issues `serve` on every start, and serves up to five auth vectors at once:
 **pow-claim** (the verifier reads your node's HTTP API; only when
 `POW_NODE_URL` is set), **keycard-attestation** (a Status Keycard attested by
 a trusted CA; `KEYCARD_TRUSTED_CAS`) and **eth-allowlist** (addresses from
-`allowlist.txt`, re-served on edit).
+`allowlist.txt`, re-served on edit), **logos-allowlist** (a tester's
+logos-blockchain node key, `allowlist-logos.txt`) and **lez-allowlist** (a LEZ
+account id, `allowlist-lez.txt`).
 
 Written for a macOS Intel host whose node runs through
 `logos-blockchain/deployment/compose.run.yml` (API published on `18080/tcp`).
@@ -23,9 +25,10 @@ image there and a linux-arm64 image on an Apple-silicon Mac.
 | `compose.yml` | the service: data volume, port, `host.docker.internal` for the node API, restart policy, capped logs |
 | `allocator.env.example` | every knob (incl. `KEYCARD_TRUSTED_CAS`, `ADVERTISE_PORT`, `ALT_MULTIADDRS`); copy to `allocator.env` |
 | `config/allowlist.txt` | eth-allowlist, one `0x…` per line (copy `config/allowlist.txt.example`; the live file is git-ignored); editable while running — the `config/` directory is bind-mounted, so any editor's save is seen |
+| `config/allowlist-logos.txt`, `config/allowlist-lez.txt` | logos-allowlist (64-hex public keys) and lez-allowlist (64-hex or base58 account ids), one per line (copy the `*.txt.example`; live files git-ignored); same bind-mount and re-serve behaviour; `LOGOS_ALLOWLIST=0` / `LEZ_ALLOWLIST=0` turn a vector off. Spec: `docs/auth-allowlists.md` |
 | `node/` (`compose.yml`, `node.env.example`, `run-node.sh`) | a FOLLOWER logos-blockchain node on the testers' chain, API on the host loopback: the node the pow-claim verifier reads (§7) |
 | `keycard-native.sh` | a real Keycard through a host `logoscore` client against this allocator (§8.1); an operator tool |
-| `verify-local.sh` | the D1-D8 end-to-end checks against a local zone (three vectors, restart, re-serve, switch) |
+| `verify-local.sh` | the D1-D10 end-to-end checks against a local zone (five vectors, restart, re-serve, switch) |
 | `node/find-claims.py` | lists PoW reward claims on a node and prints `claim_block_id` + `pow_nullifier` for pinning (§7, §8) |
 | `client-compose.yml`, `client-entrypoint.sh`, `client.env.example`, `CLIENT.md` | the CLIENT side in the same image: load the client modules, bring up libp2p, send one request to the allocator and classify the reply — the connectivity probe for a tester machine (see `CLIENT.md`) |
 | `delivery-compose.yml`, `client-delivery.sh`, `delivery.env.example` | delivery mode of the client: membership through the gifter, then a delivery node that sends/receives with an RLN proof — `CLIENT.md` §5 |
@@ -137,6 +140,12 @@ pipeline work up to the chain.
   reports; append it to `config/allowlist.txt` and save. The entrypoint re-serves
   within `HEALTH_EVERY_S` (30 s): `docker compose logs --tail 5 allocator`
   shows `re-serving`. Each address yields one membership.
+- **logos-allowlist**: the tester runs `logos_sign_module.public_key` against
+  their own node (testers doc recipe D) and sends you the 64-hex key; append it
+  to `config/allowlist-logos.txt`. Same re-serve; one membership per key.
+- **lez-allowlist**: the tester runs `lez_sign_module.account_id` (recipe E)
+  and sends the base58 (or hex) id; append it to `config/allowlist-lez.txt`.
+  One membership per account.
 - **pow-claim**: nothing to configure per tester. They need a node that mines
   on the chain `POW_NODE_URL` follows and a settled reward claim; the verifier
   checks the claim against that node (§7, §8).

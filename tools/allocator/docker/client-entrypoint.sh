@@ -118,6 +118,27 @@ except Exception: print("")')
             [ -n "$ADDR" ] || al_die "eth_sign_module.address answered nothing"
             al_say "eth-allowlist address (give this to the allocator operator): $ADDR — minted per run unless the module has a persistence path; set CLIENT_AUTH_ARGS={\"private_key\":\"0x…\"} for a stable one"
         fi ;;
+    logos_sign_module)
+        # The key is the tester's own logos-blockchain node's PoWClaim key;
+        # nothing is stored in the module. node_url must be reachable from here.
+        PKRES=$(al_call logos_sign_module public_key "$AUTH_ARGS" | al_res) || PKRES=""
+        ADDR=$(al_field "$PKRES" public_key)
+        [ -n "$ADDR" ] || al_die "logos_sign_module.public_key failed (is node_url in CLIENT_AUTH_ARGS reachable from the container, e.g. http://host.docker.internal:18080, and does the node have exactly one PoWClaim key or public_key given?): ${PKRES:-<no reply>}"
+        al_say "logos-allowlist public key (give this to the allocator operator): $ADDR (source $(al_field "$PKRES" source))" ;;
+    lez_sign_module)
+        PK=$(ARGS="$AUTH_ARGS" python3 -I -c 'import json, os
+try: print(json.loads(os.environ["ARGS"]).get("private_key", "") or "")
+except Exception: print("")')
+        if [ -n "$PK" ]; then
+            LRES=$(al_call lez_sign_module import_key "$PK" | al_res) || LRES=""
+            [ -n "$(al_field "$LRES" account_id)" ] || al_die "lez_sign_module.import_key refused the private_key in CLIENT_AUTH_ARGS: ${LRES:-<no reply>}"
+        else
+            LRES=$(al_call lez_sign_module account_id | al_res) || LRES=""
+            [ -n "$(al_field "$LRES" account_id)" ] || al_die "lez_sign_module.account_id answered nothing: ${LRES:-<no reply>}"
+        fi
+        ADDR=$(al_field "$LRES" account_id_base58)
+        al_say "lez-allowlist account id (give this to the allocator operator): $ADDR (hex $(al_field "$LRES" account_id))"
+        [ -n "$PK" ] || al_say "minted per run unless the module has a persistence path; set CLIENT_AUTH_ARGS={\"private_key\":\"0x…\"} for a stable one" ;;
 esac
 
 # ---------------------------------------------------------------- request
@@ -179,9 +200,9 @@ case "$RES" in
     *"attestation verification failed"*)
         al_say "RESULT: CONNECTED — keycard verifier refused the attestation (CA not trusted or bad payload)" ;;
     *"not allowlisted"*)
-        al_say "RESULT: CONNECTED — the allocator verified the request and refused this address; ask the operator to allowlist $ADDR" ;;
+        al_say "RESULT: CONNECTED — the allocator verified the request and refused this credential; ask the operator to allowlist ${ADDR:-it}" ;;
     *"allowlist is empty"*)
-        al_say "RESULT: CONNECTED — the allocator answered; its eth allowlist is still empty, ask the operator to add $ADDR" ;;
+        al_say "RESULT: CONNECTED — the allocator answered; its $AUTH_TYPE allowlist is still empty, ask the operator to add ${ADDR:-your credential}" ;;
     *"insufficient_balance"*)
         al_say "RESULT: CONNECTED and ALLOWLISTED — the allocator reached its registry; its payer is not funded yet" ;;
     *"credential already used"*)

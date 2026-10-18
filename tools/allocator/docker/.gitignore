@@ -2,6 +2,8 @@ bundles/*.lgx
 allocator.env
 client.env
 config/allowlist.txt
+config/allowlist-logos.txt
+config/allowlist-lez.txt
 runs/
 node/node.env
 node/deployment.yaml

@@ -46,6 +46,8 @@ logosctl install rln-gifter-module.lgx -y
 logosctl install eth-sign-module.lgx -y            # recipe A (Ethereum key)
 logosctl install pow-claim-capture-module.lgx -y   # recipe B (PoW claim; built from branch feat/pow-claim-auth-vector)
 logosctl install keycard-capture-module.lgx -y     # recipe C (Status Keycard; darwin build from the operator)
+logosctl install logos-sign-module.lgx -y          # recipe D (your logos-blockchain node's key)
+logosctl install lez-sign-module.lgx -y            # recipe E (LEZ account key)
 ```
 
 ## 2. Prepare your RLN stack
@@ -164,6 +166,48 @@ used` — this card already has a membership. Verified with a real card and an
 ACS ACR39U reader (2026-10-16): grant in 9 s, replay refused. If
 `card_status` stays `{"present":false}` with the card in, re-plug the reader:
 a blinking reader that is not listed by PC/SC is not enumerated.
+
+### Recipe D — logos-blockchain node key (`logos-allowlist`)
+
+You run your own logos-blockchain node with one PoWClaim key; its public key
+is your credential and the node signs for it (the key never leaves the node).
+Install `logos-sign-module.lgx`, then:
+
+```sh
+logosctl module load logos_sign_module
+logosctl call logos_sign_module public_key '{"node_url":"http://127.0.0.1:8080"}'
+# {"public_key":"<64 hex>","source":"pow_status"}
+```
+
+Send the `public_key` (K) to the operator and wait for "added". If the node has
+more than one PoWClaim key, add `"public_key":"<64 hex>"` to the args. Register
+as in step 4 with `"auth_type":"logos-allowlist"`,
+`"auth_provider":"logos_sign_module"` and `"auth_args":{"node_url":"http://127.0.0.1:8080"}`
+(from the Docker client use `http://host.docker.internal:18080`). The node
+proves the signature during the request (about 15 s). One key grants one
+membership. Refusals: `not allowlisted` — K is not on the operator's list yet;
+`credential already used`.
+
+### Recipe E — LEZ account key (`lez-allowlist`)
+
+Install `lez-sign-module.lgx`, then:
+
+```sh
+logosctl module load lez_sign_module
+logosctl call lez_sign_module account_id
+# {"account_id":"<64 hex>","account_id_base58":"…","public_key":"…","persisted":true}
+```
+
+Send the `account_id_base58` to the operator and wait for "added". Register as
+in step 4 with `"auth_type":"lez-allowlist"` and
+`"auth_provider":"lez_sign_module"`; no `auth_args` needed. The key is minted on
+first use and kept under the module's data dir (`persisted:true`); when it says
+`persisted:false` the id changes per run, so pin a key: `logosctl call
+lez_sign_module import_key <32-byte hex>` prints its ids (the key lands on a
+command line), and pass `"auth_args":{"private_key":"0x<hex>"}` in the
+registration. One
+account grants one membership. Refusals: `not allowlisted`,
+`credential already used`.
 
 ## 4. Register
 

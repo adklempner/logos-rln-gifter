@@ -88,9 +88,9 @@ Knobs in `client.env` (the tester procedure for each vector is
 
 | Knob | What |
 |---|---|
-| `CLIENT_AUTH_TYPE` | vector: `eth-allowlist` (default), `pow-claim`, `keycard-attestation`, or `none` |
-| `CLIENT_AUTH_PROVIDER` | producer module: `eth_sign_module`, `pow_claim_capture_module`; ignored with `CLIENT_AUTH_PAYLOAD` |
-| `CLIENT_AUTH_ARGS` | producer args. eth: `{"private_key":"0x…"}`. pow-claim: `{"node_url":"http://host.docker.internal:18080","audience":"","rate_max":100,"claim_block_id":"<hex>","pow_nullifier":"<hex>"}` (testers doc recipe B step 4; `audience` must equal the operator's `POW_AUDIENCE`, currently empty) |
+| `CLIENT_AUTH_TYPE` | vector: `eth-allowlist` (default), `logos-allowlist`, `lez-allowlist`, `pow-claim`, `keycard-attestation`, or `none` |
+| `CLIENT_AUTH_PROVIDER` | producer module: `eth_sign_module`, `logos_sign_module`, `lez_sign_module`, `pow_claim_capture_module`; ignored with `CLIENT_AUTH_PAYLOAD` |
+| `CLIENT_AUTH_ARGS` | producer args. eth and lez: `{"private_key":"0x…"}`. logos: `{"node_url":"http://host.docker.internal:18080","public_key"?:"<64 hex>"}` (your own node; the key it reports is printed for the operator). pow-claim: `{"node_url":"http://host.docker.internal:18080","audience":"","rate_max":100,"claim_block_id":"<hex>","pow_nullifier":"<hex>"}` (testers doc recipe B step 4; `audience` must equal the operator's `POW_AUDIENCE`, currently empty) |
 | `CLIENT_AUTH_PAYLOAD` | raw auth payload hex (provider skipped); e.g. a synthetic keycard attestation from `tools/mint_attest.py` (`verify-local.sh` D8). A real card cannot be used in the container: no PC/SC, see recipe C |
 | `CLIENT_IDENTITY_COMMITMENT` | the commitment a raw payload was minted for; empty = random per run |
 
@@ -158,9 +158,9 @@ Allocator and auth, reused from the probe:
 |---|---|---|
 | `ALLOCATOR_PEER_ID` | none (required) | the operator's `gifter_peer_id` |
 | `ALLOCATOR_MULTIADDR` | `/ip4/<allocator host ip>/tcp/9000` (placeholder) | the operator's `gifter_multiaddr` (required); IPv4 only |
-| `CLIENT_AUTH_TYPE` | `eth-allowlist` | `eth-allowlist`, `pow-claim`, or `none` (open allocator) |
-| `CLIENT_AUTH_PROVIDER` | `eth_sign_module` | producer module: `eth_sign_module` or `pow_claim_capture_module` |
-| `CLIENT_AUTH_ARGS` | empty | producer args (JSON). eth: `{"private_key":"0x<32-byte hex>"}` for a stable allowlisted address; pow-claim: the pinned claim, see the block below |
+| `CLIENT_AUTH_TYPE` | `eth-allowlist` | `eth-allowlist`, `logos-allowlist`, `lez-allowlist`, `pow-claim`, or `none` (open allocator) |
+| `CLIENT_AUTH_PROVIDER` | `eth_sign_module` | producer module: `eth_sign_module`, `logos_sign_module`, `lez_sign_module` or `pow_claim_capture_module` |
+| `CLIENT_AUTH_ARGS` | empty | producer args (JSON). eth and lez: `{"private_key":"0x<32-byte hex>"}` for a stable allowlisted address / account id; logos: `{"node_url":"http://host.docker.internal:18080"}`; pow-claim: the pinned claim, see the block below |
 | `CLIENT_AUTH_PAYLOAD` | empty | precomputed hex payload instead of a producer; rarely useful here (this mode generates its own commitment, and an attestation is bound to one) |
 | `CLIENT_RATE` | `100` | `rate_limit` of the membership (the allocator caps it) |
 
