@@ -1,0 +1,6 @@
+# eth-allowlist for the allocator: one Ethereum address per line, as reported
+# by the tester's `allowlist_sign_module.identity` for
+# eth-allowlist (`id`, lowercase 0x…). Lines starting
+# with # and blank lines are ignored. Each address is granted ONE membership
+# (it is the vector's nullifier). Saving this file re-`serve`s the running
+# allocator within ~30 s — no restart needed.

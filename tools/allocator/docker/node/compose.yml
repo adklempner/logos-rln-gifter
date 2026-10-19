@@ -1,0 +1,50 @@
+# tools/allocator/docker/node/compose.yml — a FOLLOWER logos-blockchain node for
+# the allocator's pow-claim verifier (never mines; nothing to protect on it).
+#
+#   cp node.env.example node.env         # image tag + peers (see the README)
+#   docker compose --env-file node.env up -d       # --env-file: the image tag
+#   docker compose --env-file node.env logs -f     # and ports are interpolated
+#
+# The chain is the one built into the image tag (the miner's tag); a
+# deployment.yaml placed next to this file overrides it.
+#
+# The API is published on the host's loopback only (the allocator container
+# reaches it as host.docker.internal:18080 — its default POW_NODE_URL). The
+# node's HTTP API includes /wallet/sign/zk, an unauthenticated signer: never
+# publish it on a LAN address.
+name: rln-allocator-pow-node
+
+services:
+  node:
+    image: ghcr.io/logos-blockchain/logos-blockchain-node:${NODE_IMAGE_LABEL:?set NODE_IMAGE_LABEL in node.env (the miner's tag)}
+    container_name: rln_allocator_pow_node
+    env_file: node.env
+    environment:
+      LB_HOST_IDX: "0"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - pow-node-data:/node-data
+      # run-node.sh and an optional deployment.yaml; a directory mount, so
+      # edits are seen.
+      - ./:/etc/allocator-node:ro
+    ports:
+      - "127.0.0.1:${NODE_API_PORT:-18080}:18080/tcp"
+      - "${NODE_NET_PORT:-3000}:${NODE_NET_PORT:-3000}/udp"
+    entrypoint: /etc/allocator-node/run-node.sh
+    restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:18080/cryptarchia/info"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  pow-node-data:
+    name: rln-allocator-pow-node-data

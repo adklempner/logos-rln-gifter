@@ -1,0 +1,49 @@
+# tools/allocator/docker/compose.yml — the RLN membership allocator as one
+# container beside a logos-blockchain node run through logosctl in Docker.
+#
+#   cp allocator.env.example allocator.env   # fill in ADVERTISE_IP etc.
+#   ./build-bundles.sh                       # portable bundles for this arch
+#   docker compose up -d --build
+#   docker compose exec allocator cat /var/lib/allocator/allocator.json
+#
+# Everything that must survive restarts and image rebuilds is on the
+# `allocator-data` volume: the libp2p node key (the PeerId testers pin), the
+# lez wallet home (the payer seed), the consumed-nullifier file, the
+# logosctl session and allocator.json. The allowlist is a host file
+# (config/allowlist.txt) so the operator edits it with any editor; the
+# entrypoint re-`serve`s on change.
+services:
+  allocator:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: rln-allocator:local
+    container_name: rln_allocator
+    env_file: allocator.env
+    volumes:
+      - allocator-data:/var/lib/allocator
+      # The directory, not the file: a bind-mounted file keeps the inode it
+      # was mounted with, and editors (and macOS `sed -i`) save by replacing
+      # the file, which the container would never see.
+      - ./config:/etc/allocator:ro
+    # The container always listens on 9000 (LISTEN_PORT in allocator.env must
+    # stay 9000 unless this mapping is edited: compose interpolates only from
+    # the shell / .env, never from env_file). To publish another HOST port:
+    # `HOST_PORT=9100 docker compose up -d` and set ADVERTISE_PORT=9100.
+    ports:
+      - "${HOST_PORT:-9000}:9000/tcp"
+    # The pow-claim verifier reads the node's HTTP API, which the node's own
+    # compose publishes on the host (18080); host.docker.internal reaches it
+    # without joining the node stack's network.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    stop_grace_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  allocator-data: {}
