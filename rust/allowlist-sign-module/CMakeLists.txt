@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(EthAuthModulePlugin LANGUAGES CXX)
+project(AllowlistSignModulePlugin LANGUAGES CXX)
 
 if(DEFINED ENV{LOGOS_MODULE_BUILDER_ROOT})
     include($ENV{LOGOS_MODULE_BUILDER_ROOT}/cmake/LogosModule.cmake)
@@ -10,4 +10,4 @@ endif()
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/metadata.json
                ${CMAKE_CURRENT_BINARY_DIR}/metadata.json COPYONLY)
 
-logos_module(NAME eth_auth_module)
+logos_module(NAME allowlist_sign_module)

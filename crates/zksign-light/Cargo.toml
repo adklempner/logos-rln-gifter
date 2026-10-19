@@ -1,0 +1,31 @@
+[package]
+name = "zksign_light"
+version = "0.1.0"
+edition = "2021"
+description = "Logos blockchain zkSign helpers for RLN gifter auth vectors: offline Groth16 verification (feature `verify`) and the node's /wallet/sign/zk client (feature `client`)"
+license = "MIT OR Apache-2.0"
+
+[features]
+# Both on for `cargo test` here; consumers take `default-features = false` plus the one they need.
+default = ["verify", "client"]
+# Offline zkSign verification against a (bundled or operator-supplied) VK.
+verify = ["dep:logos-blockchain-groth16", "dep:logos-blockchain-poseidon2", "dep:ark-ff", "dep:serde_json"]
+# Plain-http client for a local node's /pow/status and /wallet/sign/zk.
+client = ["dep:ureq", "dep:serde_json"]
+
+[dependencies]
+hex = "0.4"
+serde_json = { version = "1", optional = true }
+ureq = { version = "2", default-features = false, optional = true }
+# Same rev for groth16 and poseidon2 (node 0.3.0-rc.5, circuits v0.5.7); ark 0.5 matches that workspace.
+logos-blockchain-groth16 = { git = "https://github.com/logos-blockchain/logos-blockchain", rev = "2c652646d74354b2877620bf0bc53b4c4d3f18e4", optional = true }
+logos-blockchain-poseidon2 = { git = "https://github.com/logos-blockchain/logos-blockchain", rev = "2c652646d74354b2877620bf0bc53b4c4d3f18e4", optional = true }
+ark-ff = { version = "0.5", default-features = false, optional = true }
+
+[dev-dependencies]
+# Recomputes the pow-claim challenge digest of the recorded real fixture.
+blake2 = "0.10"
+
+[[test]]
+name = "real_fixture"
+required-features = ["verify"]

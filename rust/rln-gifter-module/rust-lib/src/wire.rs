@@ -7,6 +7,39 @@
 // the rln_auth_vector crate and in gifter configuration, not here.
 pub const RLN_GIFTER_CODEC: &str = "/logos/rln/membership/1.0.0";
 
+/// The BN254 scalar field modulus r, big-endian.
+const BN254_R_BE: [u8; 32] = [
+    0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58, 0x5d,
+    0x28, 0x33, 0xe8, 0x48, 0x79, 0xb9, 0x70, 0x91, 0x43, 0xe1, 0xf5, 0x93, 0xf0, 0x00, 0x00, 0x01,
+];
+
+/// Why the registry would refuse this identity commitment, or None when it is
+/// a canonical BN254 scalar. The registry reads the 32 bytes LITTLE-endian
+/// and refuses zero or any value >= r (liblogos_lez_rln_module 5.1.0:
+/// `invalid_commitment`); older registry modules submitted it, the guest
+/// panicked, and the fee was charged anyway — so both the requester and the
+/// gifter check before any verifier call or chain round-trip. The strings
+/// mirror the lez module's kind so a caller can match `invalid_commitment`
+/// whichever side refused.
+pub fn commitment_refusal(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() != 32 {
+        return Some("identity_commitment must be 32 bytes");
+    }
+    if bytes.iter().all(|&b| b == 0) {
+        return Some("invalid_commitment: zero");
+    }
+    // Little-endian value vs r: compare from the most significant byte down.
+    for (le_byte, r_byte) in bytes.iter().rev().zip(BN254_R_BE.iter()) {
+        if le_byte < r_byte {
+            return None;
+        }
+        if le_byte > r_byte {
+            return Some("invalid_commitment: not a BN254 field element (little-endian value >= r)");
+        }
+    }
+    Some("invalid_commitment: not a BN254 field element (little-endian value >= r)")
+}
+
 #[derive(Default, Clone)]
 pub struct RlnGifterRequest {
     pub request_id: String,
@@ -285,6 +318,27 @@ impl RlnGifterResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commitment_refusal_mirrors_the_registry() {
+        // r itself, little-endian: refused; r - 1: accepted.
+        let mut r_le = BN254_R_BE;
+        r_le.reverse();
+        assert!(commitment_refusal(&r_le).unwrap().contains("invalid_commitment"));
+        let mut r_minus_1 = r_le;
+        r_minus_1[0] -= 1;
+        assert_eq!(commitment_refusal(&r_minus_1), None);
+        assert_eq!(commitment_refusal(&[0xff; 32]).unwrap(), "invalid_commitment: not a BN254 field element (little-endian value >= r)");
+        assert_eq!(commitment_refusal(&[0u8; 32]).unwrap(), "invalid_commitment: zero");
+        let mut one = [0u8; 32];
+        one[0] = 1;
+        assert_eq!(commitment_refusal(&one), None);
+        // Top byte 0x0a < 0x30: canonical whatever the rest holds.
+        let mut small_top = [0xab; 32];
+        small_top[31] = 0x0a;
+        assert_eq!(commitment_refusal(&small_top), None);
+        assert!(commitment_refusal(&[1u8; 31]).unwrap().contains("32 bytes"));
+    }
 
     #[test]
     fn request_roundtrip() {

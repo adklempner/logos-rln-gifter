@@ -1,12 +1,12 @@
 [package]
-name = "eth_auth_module"
+name = "allowlist_auth_module"
 version = "0.1.0"
 edition = "2021"
 
 [workspace]
 
 [lib]
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "rlib"]
 
 [profile.release]
 panic = "abort"
@@ -14,7 +14,10 @@ panic = "abort"
 [dependencies]
 serde_json = "1"
 hex = "0.4"
-k256 = { version = "0.13", features = ["ecdsa"] }
+sha2 = "0.10"
+base58 = "0.2"
+k256 = { version = "0.13", features = ["ecdsa", "schnorr"] }
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 rln_auth_vector = { git = "https://github.com/logos-co/logos-rln-gifter", rev = "79b90eef9423ce6a9000182a2d343be7eacd8d6b", package = "rln_auth_vector" }
+zksign_light = { git = "https://github.com/logos-co/logos-rln-gifter", rev = "a04b0d371cfba9e41fe5470bbb4dc2c7d2fdcd45", package = "zksign_light", default-features = false, features = ["verify"] }
 logos-rust-sdk = { path = "../logos-rust-sdk-src" }

@@ -1,18 +1,18 @@
 {
-  "name": "eth_auth_module",
+  "name": "allowlist_auth_module",
   "version": "0.1.0",
-  "description": "EIP-191 eth-allowlist verifier for gifted RLN registration (rln_auth_vector verify_auth)",
+  "description": "Allowlist verifiers for gifted RLN registration (rln_auth_vector verify_auth): eth-allowlist (EIP-191), logos-allowlist (zkSign) and lez-allowlist (BIP-340)",
   "author": "Logos",
   "type": "core",
   "interface": "cdylib",
   "category": "blockchain",
-  "main": "eth_auth_module_plugin",
+  "main": "allowlist_auth_module_plugin",
   "dependencies": [],
   "include": [],
   "capabilities": [],
 
   "codegen": {
-    "rust": { "crate": "rust-lib", "trait": "EthAuthModule" }
+    "rust": { "crate": "rust-lib", "trait": "AllowlistAuthModule" }
   },
 
   "nix": {

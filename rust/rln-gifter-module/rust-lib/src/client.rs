@@ -44,6 +44,11 @@ pub fn request(args_json: &str) -> Result<Value, String> {
     let id_commitment_hex = provided_commitment.trim_start_matches("0x").to_lowercase();
     let id_commitment =
         hex::decode(&id_commitment_hex).map_err(|e| format!("id_commitment hex: {e}"))?;
+    // The gifter refuses the same values; failing here costs no producer
+    // call, no dial and no verifier round-trip on the allocator.
+    if let Some(why) = crate::wire::commitment_refusal(&id_commitment) {
+        return Err(why.into());
+    }
 
     // Auth vector + payload. `authType` names the vector in the wire's
     //    OPEN authentication_type vocabulary — any type the target gifter is
@@ -163,8 +168,24 @@ mod tests {
         request(&format!(
             r#"{{"gifterPeerId":"12D3KooWTest","gifterMultiaddr":"/ip4/127.0.0.1/tcp/1",
                  "identityCommitment":"{}",{extra}"rate":100}}"#,
-            "ab".repeat(32)
+            canonical()
         ))
+    }
+
+    // 0xab repeated reads (little-endian) above r; a 0x0a top byte keeps the
+    // value canonical whatever the lower bytes hold.
+    fn canonical() -> String { format!("{}0a", "ab".repeat(31)) }
+    fn canonical_upper() -> String { format!("{}0A", "AB".repeat(31)) }
+
+    #[test]
+    fn non_canonical_commitment_is_refused_before_any_io() {
+        for (idc, want) in [("ff".repeat(32), "invalid_commitment: not a BN254"), ("00".repeat(32), "invalid_commitment: zero"), ("ab".repeat(31), "32 bytes")] {
+            let e = request(&format!(
+                r#"{{"gifterPeerId":"p","gifterMultiaddr":"/m","identityCommitment":"{idc}","rate":100}}"#
+            ))
+            .unwrap_err();
+            assert!(e.contains(want), "{idc}: got {e}");
+        }
     }
 
     #[test]
@@ -201,7 +222,7 @@ mod tests {
         let e = request(&format!(
             r#"{{"gifterPeerId":"p","gifterMultiaddr":"/m",
                  "identityCommitment":"{}","authType":"t","authProvider":"m"}}"#,
-            "AB".repeat(32)
+            canonical_upper()
         ))
         .unwrap_err();
         assert!(!e.contains("id_commitment hex"), "got: {e}");

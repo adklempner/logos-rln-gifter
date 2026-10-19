@@ -2,7 +2,7 @@
 // verifier module returning a nullifier opts its credential into
 // reserve-before-register / rollback-on-failure / persist-on-success replay
 // protection. Vector verification itself lives in plugin modules
-// (keycard-auth-module, eth-auth-module, …) — see the rln_auth_vector crate.
+// (keycard-auth-module, allowlist-auth-module, …) — see the rln_auth_vector crate.
 // FEATURE: RLN membership gifter replay protection
 
 use std::collections::HashSet;

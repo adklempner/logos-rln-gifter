@@ -201,8 +201,12 @@ fn handle_request(buf: &[u8]) -> RlnGifterResponse {
         Err(e) => return failure_response("N/A", false, &format!("decode error: {e}")),
     };
 
-    if req.identity_commitment.len() != 32 {
-        return failure_response(&req.request_id, true, "identity_commitment must be 32 bytes");
+    // Length AND field membership: a non-canonical commitment must never
+    // reach a verifier (which would spend a nullifier reservation) or the
+    // registry module (which refuses it since 5.1.0, and before that charged
+    // the fee for a panicking guest).
+    if let Some(why) = crate::wire::commitment_refusal(&req.identity_commitment) {
+        return failure_response(&req.request_id, true, why);
     }
 
     let Some(cfg) = lock(&SERVER).clone() else {
@@ -357,6 +361,11 @@ impl RegisterError {
     }
 }
 
+/// The registry module's refusal to submit, `{"error":"<kind>: <reason>"}`.
+fn refusal(reply: &Value) -> Option<&str> {
+    reply.get("error").and_then(Value::as_str)
+}
+
 /// The leaf of a confirmed membership, from a `get_membership` reply:
 /// `{"registered":true,"leaf_index":N,...}`; None while it is not registered.
 fn confirmed_leaf(reply: &Value) -> Option<u64> {
@@ -382,6 +391,12 @@ fn register(cfg: &ServerCfg, id_commitment: &[u8], rate: u64) -> Result<Membersh
         REGISTER_TIMEOUT_MS,
     )
     .map_err(RegisterError::NotSubmitted)?;
+    // liblogos_lez_rln_module >= 5.1.0 refuses a registration its program would
+    // reject (a commitment that is not a field element, a full registry, a
+    // payer that cannot pay) without submitting it: nothing will land.
+    if let Some(why) = refusal(&reply) {
+        return Err(RegisterError::NotSubmitted(format!("register_member refused: {why}")));
+    }
 
     // tx_result is a JSON STRING nesting {tx_hash,...}: the submitted
     // transaction. Absent for an already-registered PDA.
@@ -426,6 +441,13 @@ fn register(cfg: &ServerCfg, id_commitment: &[u8], rate: u64) -> Result<Membersh
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refused_registration_is_recognised() {
+        let r = json!({"error": "invalid_commitment: not a BN254 field element"});
+        assert_eq!(refusal(&r), Some("invalid_commitment: not a BN254 field element"));
+        assert_eq!(refusal(&json!({"leaf_index": 3, "pending": true})), None);
+    }
 
     #[test]
     fn only_a_registered_membership_has_a_confirmed_leaf() {
