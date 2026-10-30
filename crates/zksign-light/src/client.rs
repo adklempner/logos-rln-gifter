@@ -107,6 +107,28 @@ pub fn parse_sig_reply(reply: &Value) -> Result<[u8; 128], String> {
     Ok(o)
 }
 
+/// The node operations a zkSign producer needs (seam for tests).
+pub trait ZkNode {
+    fn pow_status(&self) -> Result<Value, String>;
+    /// zkSign of `digest` by the node-held key `pk_hex` → `pi_a‖pi_b‖pi_c`.
+    fn sign_zk(&self, digest: &[u8; 32], pk_hex: &str) -> Result<[u8; 128], String>;
+}
+
+/// [`ZkNode`] over a node's HTTP API.
+pub struct HttpZkNode {
+    pub url: String,
+    pub timeout_ms: u64,
+}
+
+impl ZkNode for HttpZkNode {
+    fn pow_status(&self) -> Result<Value, String> {
+        pow_status(&self.url, self.timeout_ms)
+    }
+    fn sign_zk(&self, digest: &[u8; 32], pk_hex: &str) -> Result<[u8; 128], String> {
+        sign_zk(&self.url, digest, pk_hex, self.timeout_ms)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

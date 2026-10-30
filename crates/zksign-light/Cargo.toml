@@ -1,6 +1,6 @@
 [package]
 name = "zksign_light"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Logos blockchain zkSign helpers for RLN gifter auth vectors: offline Groth16 verification (feature `verify`) and the node's /wallet/sign/zk client (feature `client`)"
 license = "MIT OR Apache-2.0"
@@ -15,6 +15,7 @@ client = ["dep:ureq", "dep:serde_json"]
 
 [dependencies]
 hex = "0.4"
+rln_auth_vector = { path = "../rln-auth-vector" }
 serde_json = { version = "1", optional = true }
 ureq = { version = "2", default-features = false, optional = true }
 # Same rev for groth16 and poseidon2 (node 0.3.0-rc.5, circuits v0.5.7); ark 0.5 matches that workspace.

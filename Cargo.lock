@@ -1402,10 +1402,12 @@ dependencies = [
 
 [[package]]
 name = "rln_auth_vector"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "hex",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1970,13 +1972,14 @@ dependencies = [
 
 [[package]]
 name = "zksign_light"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ark-ff",
  "blake2",
  "hex",
  "logos-blockchain-groth16",
  "logos-blockchain-poseidon2",
+ "rln_auth_vector",
  "serde_json",
  "ureq",
 ]

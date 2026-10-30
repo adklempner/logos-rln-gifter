@@ -3,7 +3,8 @@
 //! public inputs are `[K, zero_pk × 31, Fr::from_le_bytes_mod_order(digest)]`,
 //! i.e. a single-key signature with the 31 unused slots holding the zero key.
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use ark_ff::PrimeField as _;
 use logos_blockchain_groth16::{
@@ -56,6 +57,51 @@ pub fn default_vk() -> Result<&'static PreparedVk, String> {
         .get_or_init(|| PreparedVk::from_json(DEFAULT_VK_JSON))
         .as_ref()
         .map_err(Clone::clone)
+}
+
+type VkKey = (String, Option<std::time::SystemTime>, u64);
+
+/// A VK file prepared once per (path, mtime, len), so a VK replaced in place
+/// is picked up on the next request without re-parsing on every call.
+pub fn vk_from_path_cached(path: &str) -> Result<Arc<PreparedVk>, String> {
+    static CACHE: OnceLock<Mutex<HashMap<VkKey, Arc<PreparedVk>>>> = OnceLock::new();
+    let meta = std::fs::metadata(path).map_err(|e| format!("config.zksign_vk_path {path}: {e}"))?;
+    let key: VkKey = (path.to_string(), meta.modified().ok(), meta.len());
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(v) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
+        return Ok(v.clone());
+    }
+    let v = Arc::new(PreparedVk::from_path(path)?);
+    let mut c = cache.lock().unwrap_or_else(|p| p.into_inner());
+    c.retain(|(p, _, _), _| p != path);
+    c.insert(key, v.clone());
+    Ok(v)
+}
+
+/// The VK a verifier uses: the bundled one or an operator's file.
+pub enum VkSource {
+    Default(&'static PreparedVk),
+    File(Arc<PreparedVk>),
+}
+
+impl VkSource {
+    pub fn get(&self) -> &PreparedVk {
+        match self {
+            VkSource::Default(v) => v,
+            VkSource::File(v) => v,
+        }
+    }
+}
+
+/// `config.zksign_vk_path` → [`VkSource`]: absent or `null` is the bundled
+/// VK; a non-empty path is read through the cache; anything else is an
+/// operator error.
+pub fn vk_from_config(v: Option<&serde_json::Value>) -> Result<VkSource, String> {
+    match v {
+        None | Some(serde_json::Value::Null) => Ok(VkSource::Default(default_vk()?)),
+        Some(serde_json::Value::String(p)) if !p.trim().is_empty() => Ok(VkSource::File(vk_from_path_cached(p.trim())?)),
+        Some(v) => Err(format!("config.zksign_vk_path: expected a non-empty string, got {v}")),
+    }
 }
 
 /// Public key of the zero secret key: `Poseidon2::compress([KDF, 0])`,
