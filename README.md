@@ -164,6 +164,15 @@ nix build ./rust/allowlist-sign-module#lgx   # client side
 The shared crates build as part of each module (fetched via the git dependency),
 and can be checked on their own with `cargo test` from the repo root.
 
+Developing the shared crates: `.cargo/config.toml` at the repo root patches
+every git-pinned shared crate to its `crates/` path, so a `cargo test` in any
+module's `rust-lib` runs against the working tree. The nix module build copies
+only the module directory and never sees that patch, so a module `Cargo.lock`
+written under it (path sources) must not be committed: run
+`tools/dev/relock.sh` first, which restores the git sources and refuses any
+lock nix could not resolve. New crate versions reach the modules through a
+pushed tag and a pin bump in each module's `Cargo.toml`.
+
 ## Runtime requirements
 
 - `rln_gifter_module` loads alongside `libp2p_module` (transport) and

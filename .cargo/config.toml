@@ -1,0 +1,11 @@
+# Local dev loop for the shared crates. Every `cargo` run under this tree
+# (the root workspace AND each rust/*/rust-lib module workspace) resolves the
+# git-pinned shared crates to the working tree instead. The nix module build
+# copies only the module directory, so it never sees this file and keeps the
+# pins — `tools/dev/relock.sh` restores git sources in the module lockfiles
+# before they are committed.
+[patch."https://github.com/logos-co/logos-rln-gifter"]
+rln_auth_vector = { path = "crates/rln-auth-vector" }
+zksign_light = { path = "crates/zksign-light" }
+keycard_attest = { path = "crates/keycard-attest" }
+keycard_client = { path = "crates/keycard-client" }
