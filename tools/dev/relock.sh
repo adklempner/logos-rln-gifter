@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Restore git sources in every module lockfile after working under
-# .cargo/config.toml's [patch] (which rewrites them to path sources), and
-# refuse to leave a lock that the nix module build cannot resolve.
+# Regenerate every module lockfile WITHOUT .cargo/config.toml's [patch] (which
+# rewrites the shared crates to path sources while developing), and refuse to
+# leave a lock the nix module build cannot resolve.
 #
 # Usage: tools/dev/relock.sh            # all modules
 #        tools/dev/relock.sh rln-auth-module rln-sign-module
@@ -28,17 +28,17 @@ fail=0
 for m in "${modules[@]}"; do
   lib="$ROOT/rust/$m/rust-lib"
   [ -f "$lib/Cargo.toml" ] || { echo "relock: no module at $lib" >&2; fail=1; continue; }
+  # A lock written under the patch holds path entries for the shared crates;
+  # the only clean way back to the git sources is a fresh resolution.
+  rm -f "$lib/Cargo.lock"
+  (cd "$lib" && cargo generate-lockfile -q) || { echo "relock: $m: cargo generate-lockfile failed" >&2; fail=1; continue; }
   for c in $SHARED; do
-    grep -q "^$c = " "$lib/Cargo.toml" || grep -q "package = \"$c\"" "$lib/Cargo.toml" || continue
-    (cd "$lib" && cargo update -q -p "$c" 2>/dev/null) || true
-  done
-  for c in $SHARED; do
-    grep -q "name = \"$c\"" "$lib/Cargo.lock" 2>/dev/null || continue
-    if ! awk -v n="$c" '$0 == "name = \"" n "\"" {f=1} f && /^source = /{print; exit}' "$lib/Cargo.lock" | grep -q 'git+https://github.com/logos-co/logos-rln-gifter'; then
+    grep -q "name = \"$c\"" "$lib/Cargo.lock" || continue
+    if ! awk -v n="$c" '$0 == "name = \"" n "\"" {f=1; next} f && /^source = /{print; exit} f && /^\[\[package\]\]/{exit}' "$lib/Cargo.lock" | grep -q 'git+https://github.com/logos-co/logos-rln-gifter'; then
       echo "relock: $m: $c is not git-sourced in Cargo.lock (nix cannot build it)" >&2
       fail=1
     fi
   done
-  echo "relock: $m ok"
+  [ "$fail" = 0 ] && echo "relock: $m ok"
 done
 exit $fail

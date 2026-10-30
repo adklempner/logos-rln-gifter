@@ -13,7 +13,7 @@ panic = "abort"
 
 [dependencies]
 serde_json = "1"
-keycard_client = { git = "https://github.com/logos-co/logos-rln-gifter", rev = "0e43809d5c2fe41b58380d1d9a2decb0fdb4d296", package = "keycard_client" }
-rln_auth_vector = { git = "https://github.com/logos-co/logos-rln-gifter", rev = "0e43809d5c2fe41b58380d1d9a2decb0fdb4d296", package = "rln_auth_vector" }
-rln_auth_vectors = { git = "https://github.com/logos-co/logos-rln-gifter", rev = "0e43809d5c2fe41b58380d1d9a2decb0fdb4d296", package = "rln_auth_vectors", default-features = false, features = ["keycard-pcsc"] }
+keycard_client = { git = "https://github.com/logos-co/logos-rln-gifter", tag = "keycard-crates-v0.2.0", package = "keycard_client" }
+rln_auth_vector = { git = "https://github.com/logos-co/logos-rln-gifter", tag = "auth-crates-v0.2.0", package = "rln_auth_vector" }
+rln_auth_vectors = { git = "https://github.com/logos-co/logos-rln-gifter", tag = "auth-crates-v0.2.0", package = "rln_auth_vectors", default-features = false, features = ["keycard-pcsc"] }
 logos-rust-sdk = { path = "../logos-rust-sdk-src" }
