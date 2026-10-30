@@ -328,23 +328,15 @@ funded by transfer, there is no faucet (the container route is in
 
 ### 4.1 The contract already exists
 
-A validator is any logos module exposing `verify_auth(json) -> json`
-(`crates/rln-auth-vector/src/lib.rs:33-97`):
-
-```jsonc
-// in
-{ "auth_type": "<type>", "payload_hex": "...", "id_commitment_hex": "...",
-  "rate": 100, "config": { /* operator's opaque per-vector config */ } }
-// out
-{ "ok": true,  "nullifier": "<stable lowercase string>" }   // accept; nullifier optional
-{ "ok": false, "reason": "..." }                             // refuse (still a successful call)
-{ "error": "..." }                                           // operator/internal fault
-```
-
-The client half is `produce_auth`: `{auth_type, id_commitment_hex, args?}` →
-`{payload_hex}`. A vector may ship one or both halves (keycard splits them so
-a headless gifter never links PC/SC). Rust vectors implement `AuthVector` and
-call `dispatch_verify`; a module in any language only has to speak this JSON.
+A validator is any logos module exposing `verify_auth(json) -> json`; the
+client half is `produce_auth`. The contract, the composition rule
+(`auth_type` = `<scheme>-<authoriser>`), the binding digest, the payload
+frame and the reasons are normative in `docs/auth-vectors.md`; the Rust form
+is `crates/rln-auth-vector`. A vector may ship one or both halves (the
+keycard scheme's producer is its own module so a headless gifter never
+links PC/SC). A new scheme or authoriser implements one trait and composes
+with every existing piece it accepts; a module in any language only has to
+speak the JSON and the bytes.
 
 ### 4.2 Wiring it into the gifter
 
@@ -375,13 +367,22 @@ An "app-specific validator" is therefore: the app ships a verifier module
 
 ### 4.3 Reference vectors
 
-| `auth_type` | Verifier / producer | Verifier `config` | Nullifier | Sybil-resistant? |
+Every composition below is verified by `rln_auth_module` and produced by
+`rln_sign_module`, except the keycard scheme's producer
+(`keycard_capture_module`, PC/SC). `rate_max` (default 100) and `audience`
+(default `""`) come from `auth_args` and are bound into every digest but
+eth's; the verifier refuses a rate above the signed `rate_max` and an
+audience other than its `config.audience`. Operator files and tester
+recipes per scheme: `docs/auth-allowlists.md`.
+
+| `auth_type` | What proves what | Verifier `config` | Nullifier | Sybil-resistant? |
 |---|---|---|---|---|
-| `eth-allowlist` | `rln_auth_module` / `rln_sign_module` (module-owned key under the module's persistence dir; `identity` `{"auth_type":"eth-allowlist"}` → `id`, what to allowlist; `auth_args` `{"private_key"}` overrides; any wallet's `personal_sign` over the lowercase hex commitment also works as a raw `auth_payload`; signs the commitment only, so a leaked payload is spendable at any allocator allowlisting the address, at any rate up to its cap) | `{"allowlist": [addr…]}` | the address | only as far as the allowlist is |
-| `logos-allowlist` | `rln_auth_module` / `rln_sign_module` (signs through the tester's own logos-blockchain node; the module stores no key; `identity` with `args` `{"node_url"}` → `id` = K, what to allowlist; `auth_args` `{"node_url","public_key"?,"rate_max"?:100,"audience"?:""}`, both signed into the v2 digest) | `{"allowlist": [K…], "audience": ""}`, 64-hex PoWClaim public keys (canonical LE scalars); `audience` must equal the producer's, and a request rate above the signed `rate_max` is refused (Docker allocator: `config/allowlist-logos.txt`, `LOGOS_ALLOWLIST`, `LOGOS_AUDIENCE`) | K (hex) | only as far as the allowlist is |
-| `lez-allowlist` | `rln_auth_module` / `rln_sign_module` (module-owned secp256k1 key, BIP-340 Schnorr; `identity` → `id` / `id_base58`, what to allowlist; `auth_args` `{"private_key"?,"rate_max"?:100,"audience"?:""}`, rate_max and audience signed into the v2 digest) | `{"allowlist": [id…], "audience": ""}`, 64-hex or base58 account ids (one malformed entry rejects the list); `audience` must equal the producer's, and a request rate above the signed `rate_max` is refused (Docker allocator: `config/allowlist-lez.txt`, base58 decoded by the entrypoint, `LEZ_ALLOWLIST`, `LEZ_AUDIENCE`) | the account id (hex) | only as far as the allowlist is |
-| `keycard-attestation` | `rln_auth_module` / `keycard_capture_module` (PC/SC) | `{"trusted_cas": [pubkey…]}` (Docker allocator: `KEYCARD_TRUSTED_CAS`, default = Status production CA) | `keccak256(ident_pub)`, one per card | yes (hardware) |
-| `logos-pow-claim` (PoC, untracked `rust/pow-claim-*`) | `rln_auth_module` / `rln_sign_module` | `{"node_url", "audience"?, "min_payout"?, …}` (`docs/auth-pow-claim.md` §5) | per claim | yes (work), incomplete (§6 of that doc) |
+| `eth-allowlist` | a module-owned key (or any wallet, `personal_sign` over the lowercase hex commitment, framed) recovers to an allowlisted address; binds neither rate nor allocator (`auth-vectors.md` §4) | `{"allowlist": [addr…]}` | the address | only as far as the allowlist is |
+| `logos-allowlist` | the tester's own logos-blockchain node zkSigns with an allowlisted key K | `{"allowlist": [K…], "audience": ""}` (`config/allowlist-logos.txt`, `LOGOS_ALLOWLIST`, `LOGOS_AUDIENCE`) | K (hex) | only as far as the allowlist is |
+| `lez-allowlist` | a module-owned secp256k1 key (BIP-340) whose LEE account id is allowlisted | `{"allowlist": [id…], "audience": ""}` (`config/allowlist-lez.txt`, `LEZ_ALLOWLIST`, `LEZ_AUDIENCE`) | the account id (hex) | only as far as the allowlist is |
+| `keycard-allowlist` | a card whose identity key is allowlisted | `{"allowlist": [ident_pub…]}` | the identity key | only as far as the allowlist is |
+| `keycard-attestation` | a card whose identity key a trusted CA certified | `{"trusted_cas": [pubkey…]}` (`KEYCARD_TRUSTED_CAS`, default = Status production CA) | `keccak256(ident_pub)`, one per card | yes (hardware) |
+| `logos-pow-claim` | the node's zkSign key owns a settled PoW reward claim on chain | `{"node_url", "audience"?, "min_payout"?, …}` (`docs/auth-pow-claim.md` §5; `POW_NODE_URL`) | the claim's `pow_nullifier` | yes (work), incomplete (§6 of that doc) |
 | `chat-installation` (design only) | — | — | — | no, identity only (`docs/auth-chat-installation.md` §7) |
 
 **Commitment-bound payloads need a producer module.** Both reference payloads
@@ -392,14 +393,13 @@ bound to the right commitment through the membership module; only
 `auth_provider` (a module the gifter client calls with the freshly minted
 commitment) works there. Both reference vectors now have one: keycard's
 `keycard_capture_module` (a physical card) and the allowlists'
-`rln_sign_module` (`rust/rln-sign-module`; for eth-allowlist the
-client daemon's own secp256k1 key, generated on first use into
+`rln_sign_module` (`rust/rln-sign-module`; for eth the client daemon's own
+secp256k1 key, generated on first use into
 `<instance_persistence_path>/eth_sign_key.hex`, plaintext, 0600 — demo-grade
-custody; the host must stamp a persistence path or the key is per-run). It
-replaced `rln_sign_module` (added 2026-10-12), whose key it does not read: a tester
-keeps an allowlisted address by `import_key`
-(`{"auth_type":"eth-allowlist","private_key":"0x…"}`; add `"force": true` to
-replace a different key already persisted). An app-specific vector
+custody; the host must stamp a persistence path or the key is per-run). A
+tester keeps an allowlisted address by `import_key`
+(`{"scheme":"eth","private_key":"0x…"}`; add `"force": true` to replace a
+different key already persisted). An app-specific vector
 whose payload binds to the commitment must ship a producer half too. Proven
 chainless by `tools/allocator/verify-chainless.sh` A9: the client's
 `rln_sign_module.identity` id for eth-allowlist allowlisted on the

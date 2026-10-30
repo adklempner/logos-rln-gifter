@@ -1,8 +1,16 @@
 # `logos-pow-claim` — a gifter auth vector backed by logos-blockchain PoW rewards
 
-Design note. Nothing in this document is implemented; §6 says what has to be
-built and in which order. Companion to `auth-chat-installation.md`, which
-covers the identity-only vector for chat accounts.
+Design note, written before the implementation. The vector exists today as the
+`pow-claim` AUTHORISER (`crates/pow-claim`, wrapped by `crates/rln-auth-vectors`)
+composed with the `logos` scheme: `auth_type` `logos-pow-claim`, verified by
+`rln_auth_module`, produced by `rln_sign_module`. Sections 3.2 and 3.3 below
+record the v1 wire this note designed; the live wire is `auth-vectors.md`
+(the digest is the composed binding with `pow_nullifier` as the bound
+evidence, the payload is the common frame with the evidence
+`flags ‖ claim_block_id ‖ pow_nullifier ‖ [spend]` after the logos part).
+§6 is the original roadmap, kept for its rationale. Companion to
+`auth-chat-installation.md`, which covers the identity-only vector for chat
+accounts.
 
 ## 1. Purpose and threat model
 
@@ -365,7 +373,7 @@ against a single compromised RPC.
 | Replay | nullifier store | `logos-pow-claim:<pow_nullifier hex>` |
 | Usable after | LIB | 30 blocks standalone, 120 blocks devnet/testnet |
 
-## 6. Implementation roadmap
+## 6. Implementation roadmap (the original plan; see the note at the top)
 
 ### A. `logos-rln-gifter` — `rust/rln-auth-module` (verifier)
 

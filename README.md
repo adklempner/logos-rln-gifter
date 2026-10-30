@@ -25,14 +25,17 @@ delegated to `liblogos_lez_rln_module`; RLN proof generation and verification
     `liblogos_lez_rln_module.register_member` on a single serialized worker,
     and answers once the registry shows the membership.
 - **Auth vector modules** — see [Authentication](#authentication):
-  `keycard-capture-module` (producer, PC/SC — separate so a headless gifter
-  needs no `pcsclite`; also `card_status()` for UIs), `rln-auth-module`
-  (verifier), `rln-auth-module` (verifier for the eth, logos and lez
-  allowlists) and `rln-sign-module` (their producer).
-- **Crates** — `crates/rln-auth-vector` (the vector contract kit every
-  module above and any third-party vector imports), `crates/keycard-attest`
-  (attestation verify) and `crates/keycard-client` (PC/SC transport), all
-  consumed as git dependencies (`keycard-crates-v0.1.0` tag / pinned rev).
+  `rln-auth-module` (the gifter's verifier, every composition),
+  `rln-sign-module` (the client's producer, every composition but the
+  keycard) and `keycard-capture-module` (the keycard scheme's producer,
+  PC/SC — separate so a headless gifter and a reader-less client never link
+  `pcsclite`; also `card_status()` for UIs).
+- **Crates** — `crates/rln-auth-vector` (the contract and the composition
+  machinery every module above and any third-party vector imports),
+  `crates/rln-auth-vectors` (the schemes and authorisers), `crates/pow-claim`,
+  `crates/zksign-light`, `crates/keycard-attest` and `crates/keycard-client`,
+  all consumed as git dependencies pinned by tag (`auth-crates-v*`,
+  `keycard-crates-v*`).
 
 The gifter modules drive `libp2p_module` through its generic custom-protocol
 bridge (`protocolRequest`, `protocolAcceptStream`, `streamReadLpJson`,
@@ -81,44 +84,27 @@ configuration only:
   (hex the application produced itself) or an `authProvider` producer module.
   No `authType` = an unauthenticated request.
 
-Reference vectors in this repo:
+An `auth_type` is a composition, `<scheme>-<authoriser>`: a **scheme** is
+how the binding digest gets signed and which identity that proves (`eth`,
+`lez`, `logos`, `keycard`); an **authoriser** is how that identity gets
+accepted (`allowlist`, `attestation`, `pow-claim`). Every scheme but eth
+signs the same binding — `sha256("logos/rln/<auth_type>/2" ‖ commitment ‖
+rate_max ‖ audience ‖ evidence)` — and every payload has the same frame
+(`0x02 ‖ scheme part ‖ evidence ‖ rate_max`); eth signs the EIP-191 message
+over the bare commitment so any wallet can. The modules compose the pieces
+they ship into a registry and answer every composition that exists:
 
-- **Keycard attestation** (`rln-auth-module` verifies,
-  `keycard-capture-module` produces — split so a headless gifter never links
-  PC/SC). The producer captures the raw `IDENTIFY_CARD` TLV, signed over the
-  commitment-bound challenge
-  `SHA256("logos/rln/keycard-attest/1" || id_commitment)`. The verifier
-  recovers the vendor CA from the card certificate, checks it against
-  `config.trusted_cas`, verifies the challenge signature, and returns the
-  once-per-card nullifier `keccak256(ident_pub)` — stable across factory
-  resets, so each card claims exactly one membership.
-- The three allowlist vectors below share one verifier module,
-  `rln-auth-module` (`rln_auth_module`), and one producer module,
-  `rln-sign-module` (`rln_sign_module`), each dispatching on
-  `auth_type`. The producer's `identity` (`{"auth_type","args"?}` →
-  `{"auth_type","id","persisted"[,"id_base58"|"source"]}`) tells the tester
-  what to send the operator; `import_key` (`{"auth_type","private_key"}`, eth
-  and lez only) pins a key.
-- **Eth allowlist / EIP-191** (`auth_type` `eth-allowlist`). The payload is a
-  `personal_sign` over the lowercase hex of the 32-byte commitment: any wallet
-  can make it and pass it via `authPayload`, or the client names
-  `rln_sign_module` as `authProvider` and it signs with a module-owned
-  key persisted under the module's data dir (`identity` → `id`, the address
-  the operator allowlists; `auth_args.private_key` overrides the key for
-  scripts). A key held by the earlier `rln_sign_module` must be brought over
-  with `import_key` to keep its address. The verifier recovers the signer, checks `config.allowlist`,
-  and returns the address as the nullifier — one membership per address,
-  persisted like every other nullifier.
-- **Logos allowlist** (`auth_type` `logos-allowlist`). The key is the tester's own
-  logos-blockchain node's PoWClaim key: the producer has the node sign
-  `sha256("logos/rln/logos-sign/1" || id_commitment)` with a zero-knowledge
-  signature, payload `K(32) || zksig(128)`; the verifier checks K against
-  `config.allowlist` and the signature, and returns K as the nullifier.
-- **LEZ allowlist** (`auth_type` `lez-allowlist`). A module-owned secp256k1 key signs
-  `sha256("logos/rln/lez-sign/1" || id_commitment)` (BIP-340), payload
-  `xonly(32) || sig(64)`; the nullifier is the LEZ account id (hex), allowlist
-  entries are hex or base58.
-  Details for all three allowlist vectors: [`docs/auth-allowlists.md`](docs/auth-allowlists.md).
+| `auth_type` | proves | nullifier |
+|---|---|---|
+| `eth-allowlist` | an allowlisted address signed (wallet or module key) | the address |
+| `lez-allowlist` | an allowlisted LEZ account key signed (BIP-340) | the account id |
+| `logos-allowlist` | an allowlisted logos-blockchain node key zkSigned | K |
+| `keycard-allowlist` | an allowlisted Keycard signed (IDENTIFY_CARD) | the card's identity key |
+| `keycard-attestation` | a Keycard certified by a trusted CA signed | `keccak256(ident_pub)`, once per card |
+| `logos-pow-claim` | a node key that owns a settled PoW reward claim signed | the claim's nullifier |
+
+Normative: [`docs/auth-vectors.md`](docs/auth-vectors.md). Per-scheme
+operator and tester guidance: [`docs/auth-allowlists.md`](docs/auth-allowlists.md).
 
 Authentication gates only the client↔gifter exchange; RLN proofs are untouched.
 
@@ -140,12 +126,14 @@ only when nothing was submitted.
 | Path | What |
 |---|---|
 | `rust/rln-gifter-module/` | gifter module — `request` (client) + `serve` (server), wire codec, nullifier store, cross-module `lp_*` client; vector-agnostic |
-| `rust/keycard-capture-module/` | keycard vector, producer half: client-side PC/SC capture (`produce_auth`) + `card_status` |
-| `rust/rln-auth-module/` | keycard vector, verifier half: attestation verify (`verify_auth`), no PC/SC |
-| `rust/rln-auth-module/` | eth-, logos- and lez-allowlist vectors, verifier half: EIP-191 recover, zk-signature verify, BIP-340 verify, each against its allowlist (`verify_auth`) |
-| `rust/rln-sign-module/` | the same three vectors, producer half: module-owned eth and lez keys, the tester's logos-blockchain node for logos (`produce_auth`, `identity`, `import_key`) |
-| `crates/rln-auth-vector/` | the auth-vector contract kit: request/reply types, `AuthVector` trait, dispatch glue |
-| `crates/keycard-attest/` | attestation verify: TLV parse, CA recovery, challenge binding, nullifier |
+| `rust/rln-auth-module/` | the gifter's verifier: every scheme × authoriser composition (`verify_auth`, `supported_auth_types`), no PC/SC |
+| `rust/rln-sign-module/` | the client's producer: module-owned eth and lez keys, the tester's logos-blockchain node for logos and pow-claim (`produce_auth`, `identity`, `import_key`) |
+| `rust/keycard-capture-module/` | the keycard scheme's producer: client-side PC/SC capture (`produce_auth`) + `card_status` |
+| `crates/rln-auth-vector/` | the contract: request/reply types, `AuthType`, the binding digest and payload frame, the `Scheme`/`Authoriser`/`Signer`/`Claimant` traits, registries, flows, reasons |
+| `crates/rln-auth-vectors/` | the pieces: schemes eth/lez/logos/keycard, authorisers allowlist/attestation/pow-claim, their produce halves |
+| `crates/pow-claim/` | PoW reward claim discovery and chain checks |
+| `crates/zksign-light/` | zkSign (Groth16) verification and the node's `/wallet/sign/zk` client |
+| `crates/keycard-attest/` | keycard attestation: TLV parse, the card's challenge signature, CA recovery, nullifier |
 | `crates/keycard-client/` | PC/SC keycard transport: secure channel + `IDENTIFY_CARD` |
 | `tools/mint_attest.py` | mint synthetic keycard attestations for CI / e2e (not for production) |
 | `Cargo.toml` | workspace over `crates/*` |

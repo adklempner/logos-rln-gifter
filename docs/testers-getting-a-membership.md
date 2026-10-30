@@ -43,8 +43,7 @@ builds it with `nix build ./rust/keycard-capture-module#lgx`).
 
 ```sh
 logosctl install rln-gifter-module.lgx -y
-logosctl install rln-sign-module.lgx -y      # recipes A, D, E (Ethereum key, logos-blockchain node key, LEZ account key)
-logosctl install rln-sign-module.lgx -y   # recipe B (PoW claim; built from branch feat/pow-claim-auth-vector)
+logosctl install rln-sign-module.lgx -y      # recipes A, B, D, E (Ethereum key, PoW claim, logos-blockchain node key, LEZ account key)
 logosctl install keycard-capture-module.lgx -y     # recipe C (Status Keycard; darwin build from the operator)
 ```
 

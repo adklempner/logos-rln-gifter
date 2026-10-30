@@ -50,13 +50,9 @@ allocator reading the miner's API, run the follower in `node/` (§7). Without
 `POW_NODE_URL` the allocator serves eth-allowlist only, which is the
 first-contact path for testers anyway.
 
-A copy of this repository (`logos-rln-gifter`, branch `feat/eth-sign-module`
-or later) on the machine, for the module sources and these files. The
-pow-claim modules (`rust/rln-auth-module`, `rust/rln-sign-module`)
-are NOT on that branch; they are on `feat/pow-claim-auth-vector` (stacked on
-it). Check that branch out to build them; `build-bundles.sh` skips them when
-absent, and an allocator without `rln-auth-module.lgx` cannot serve
-pow-claim.
+A copy of this repository (`logos-rln-gifter`) on the machine, for the module
+sources and these files. `rln-auth-module.lgx` answers every auth type the
+allocator serves, pow-claim included.
 
 ## 1. Build the portable bundles (~10 min the first time)
 

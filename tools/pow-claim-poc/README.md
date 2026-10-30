@@ -1,3 +1,8 @@
+> 2026-10-30: the PoC tooling here predates the crate move. The producer and
+> verifier crates are now `crates/pow-claim`, the modules `rln_sign_module` /
+> `rln_auth_module`, the auth type `logos-pow-claim`; the drivers were renamed
+> accordingly but have not been re-run since.
+
 # pow-claim PoC
 
 Proof of concept for the RLN gifter `pow-claim` auth vector: a Logos module
@@ -45,7 +50,7 @@ still open (see "Not done").
 
 ```
 rust/rln-sign-module/      thin module glue (flake.nix, metadata.json, rust-lib/src/lib.rs)
-  rust-lib/pow-claim-core/          producer logic: args, discover, ownership, payload, challenge, produce
+  crates/pow-claim/          producer logic: args, discover, ownership, payload, challenge, produce
     tests/producer.rs               synthetic-fixture tests
     tests/real_fixtures.rs          tests over recorded real-node fixtures
     tests/fixtures/real/            captured by run.sh (pow_status, info, block_*, events_*, sign_zk, meta)
@@ -384,7 +389,7 @@ From `runs/node2-probe.json` (two successful bring-ups; WP-B):
 ## R2.5 Verifier module `rln_auth_module`
 
 Layout: `rust/rln-auth-module/` — glue `rust-lib/src/lib.rs`
-(`PowClaimVector`, `auth_type "pow-claim"`, `dispatch_verify`), `rust-lib/pow-claim-core/`
+(`PowClaimVector`, `auth_type "pow-claim"`, `dispatch_verify`), `crates/pow-claim/`
 (verbatim copy of the capture core; never hand-edit, `build-module.sh` re-syncs it),
 `rust-lib/pow-claim-verifier/src/{lib,config,sig,ticket,chain,audit}.rs` (own
 workspace; vendored zkSign VK v0.5.7).

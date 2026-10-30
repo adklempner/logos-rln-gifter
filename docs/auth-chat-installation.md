@@ -73,7 +73,7 @@ constant is a convenience, not a requirement.)
 The gifter wire is one request and one response on
 `/logos/rln/membership/1.0.0`; there is no slot for a server-issued nonce. The
 challenge is therefore non-interactive and commitment-bound, the same shape
-the keycard vector uses (`SHA256("logos/rln/keycard-attest/1" ‖ idc)`):
+the keycard scheme used before the composed binding (`SHA256("logos/rln/keycard-attest/1" ‖ idc)`; today every scheme signs `rln_auth_vector::binding_digest`, see `auth-vectors.md`):
 
 ```
 msg := DOMAIN ‖ id_commitment ‖ rate_limit

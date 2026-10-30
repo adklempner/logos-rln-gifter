@@ -34,7 +34,7 @@ the other registry sits `pending`).
 ## 1. Get the code
 
 ```sh
-git clone -b feat/eth-sign-module git@github.com:adklempner/logos-rln-gifter.git
+git clone -b feat/allocator git@github.com:logos-co/logos-rln-gifter.git
 cd logos-rln-gifter/tools/allocator/docker
 ```
 
@@ -42,11 +42,7 @@ cd logos-rln-gifter/tools/allocator/docker
 
 Needs Docker Desktop (compose v2). The build runs inside a `nixos/nix`
 container native to the machine's architecture and produces the bundles the
-image installs (`rln_gifter_module`, `rln_sign_module`,
-`rln_auth_module`, `rln_auth_module`). The pow-claim modules (`rln_sign_module`,
-`rln_auth_module`) are on branch `feat/pow-claim-auth-vector` (stacked
-on this one): check it out to build them, or get the operator's bundles.
-`build-bundles.sh` skips them when absent.
+image installs (`rln_gifter_module`, `rln_auth_module`, `rln_sign_module`).
 
 ```sh
 ./build-bundles.sh
@@ -91,7 +87,7 @@ Knobs in `client.env` (the tester procedure for each vector is
 | Knob | What |
 |---|---|
 | `CLIENT_AUTH_TYPE` | vector: `eth-allowlist` (default), `logos-allowlist`, `lez-allowlist`, `logos-pow-claim`, `keycard-attestation`, or `none` |
-| `CLIENT_AUTH_PROVIDER` | producer module: `rln_sign_module` (default; eth-, logos- and lez-allowlist, picked by `CLIENT_AUTH_TYPE`) or `rln_sign_module`; ignored with `CLIENT_AUTH_PAYLOAD` |
+| `CLIENT_AUTH_PROVIDER` | producer module: `rln_sign_module` (default; every scheme but the PC/SC keycard, picked by `CLIENT_AUTH_TYPE`); ignored with `CLIENT_AUTH_PAYLOAD` |
 | `CLIENT_AUTH_ARGS` | producer args (a JSON object, or that object as a JSON string). eth: `{"private_key":"0x…"}`. lez: `{"private_key"?:"0x…","rate_max"?:100,"audience"?:""}`. logos: `{"node_url":"http://host.docker.internal:18080","public_key"?:"<64 hex>","rate_max"?:100,"audience"?:""}` (your own node; the key it reports is printed for the operator). logos/lez: `rate_max` (default 100) is signed and must be ≥ `CLIENT_RATE`; `audience` (default `""`) must equal the operator's `LOGOS_AUDIENCE` / `LEZ_AUDIENCE`. A `private_key` is imported (`import_key`; add `"force":true` to replace a different persisted key) and then removed from the args sent with the request. pow-claim: `{"node_url":"http://host.docker.internal:18080","audience":"","rate_max":100,"claim_block_id":"<hex>","pow_nullifier":"<hex>"}` (testers doc recipe B step 4; `audience` must equal the operator's `POW_AUDIENCE`, currently empty) |
 | `CLIENT_AUTH_PAYLOAD` | raw auth payload hex (provider skipped); e.g. a synthetic keycard attestation from `tools/mint_attest.py` (`verify-local.sh` D8). A real card cannot be used in the container: no PC/SC, see recipe C |
 | `CLIENT_IDENTITY_COMMITMENT` | the commitment a raw payload was minted for; empty = random per run |
@@ -168,7 +164,7 @@ Allocator and auth, reused from the probe:
 | `ALLOCATOR_PEER_ID` | none (required) | the operator's `gifter_peer_id` |
 | `ALLOCATOR_MULTIADDR` | `/ip4/<allocator host ip>/tcp/9000` (placeholder) | the operator's `gifter_multiaddr` (required); IPv4 only |
 | `CLIENT_AUTH_TYPE` | `eth-allowlist` | `eth-allowlist`, `logos-allowlist`, `lez-allowlist`, `logos-pow-claim`, or `none` (open allocator) |
-| `CLIENT_AUTH_PROVIDER` | `rln_sign_module` | producer module: `rln_sign_module` (the three allowlist types) or `rln_sign_module` |
+| `CLIENT_AUTH_PROVIDER` | `rln_sign_module` | producer module: `rln_sign_module` (every scheme but the PC/SC keycard) |
 | `CLIENT_AUTH_ARGS` | empty | producer args (JSON object, or stringified). eth and lez: `{"private_key":"0x<32-byte hex>"}` for a stable allowlisted address / account id (imported, then not sent on); logos: `{"node_url":"http://host.docker.internal:18080"}`; logos/lez also take `"rate_max"` (default 100, ≥ `CLIENT_RATE`) and `"audience"` (default `""`, = the operator's `LOGOS_AUDIENCE` / `LEZ_AUDIENCE`); pow-claim: the pinned claim, see the block below |
 | `CLIENT_AUTH_PAYLOAD` | empty | precomputed hex payload instead of a producer; rarely useful here (this mode generates its own commitment, and an attestation is bound to one) |
 | `CLIENT_RATE` | `100` | `rate_limit` of the membership (the allocator caps it) |
