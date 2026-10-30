@@ -1,0 +1,51 @@
+[package]
+name = "pow-claim"
+version = "0.2.0"
+edition = "2021"
+description = "The RLN gifter pow-claim authoriser: a logos zkSign key authorised by a settled PoW reward claim on chain — claim discovery and ownership (feature `produce`), chain checks (feature `verify`)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "pow_claim"
+
+[features]
+default = ["produce", "verify", "strict-ownership"]
+# Claim discovery, ownership and the node-side zkSign (the producer half).
+produce = []
+# Chain checks against the gifter's own node and offline zkSign verification.
+verify = ["zksign_light/verify", "dep:logos-blockchain-groth16", "dep:logos-blockchain-poseidon2", "dep:ark-ff"]
+# Path B ownership requires the Transfer to spend NoteId(minted utxo); needs Poseidon2.
+strict-ownership = ["dep:logos-blockchain-poseidon2", "dep:ark-ff"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+blake2 = "0.10"
+ureq = { version = "2", default-features = false }
+rln_auth_vector = { path = "../rln-auth-vector" }
+zksign_light = { path = "../zksign-light", default-features = false, features = ["client"] }
+# Pinned to node 0.3.0-rc.5; ark versions match that workspace (0.5).
+logos-blockchain-groth16 = { git = "https://github.com/logos-blockchain/logos-blockchain", rev = "2c652646d74354b2877620bf0bc53b4c4d3f18e4", optional = true }
+logos-blockchain-poseidon2 = { git = "https://github.com/logos-blockchain/logos-blockchain", rev = "2c652646d74354b2877620bf0bc53b4c4d3f18e4", optional = true }
+ark-ff = { version = "0.5", default-features = false, optional = true }
+
+[[test]]
+name = "verify_real"
+required-features = ["verify", "produce"]
+
+[[test]]
+name = "verify_synthetic"
+required-features = ["verify"]
+
+[[test]]
+name = "producer"
+required-features = ["produce"]
+
+[[test]]
+name = "real_fixtures"
+required-features = ["produce"]
+
+[[example]]
+name = "produce"
+required-features = ["produce"]

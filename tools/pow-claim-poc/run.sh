@@ -7,7 +7,7 @@
 #      POC_ALLOW_UNFINAL (0), LOGOSCORE, BM_LGX, PCM_LGX (skip module build if set),
 #      POC_KEEP (0; 1 leaves the node up), POC_SKIP_BUILD_VERIFY (0).
 # Writes: <run>/{claim.json,produce/,summary.json}, verify/tests/fixtures/golden.json,
-#         rust-lib/pow-claim-core/tests/fixtures/real/.
+#         crates/pow-claim/tests/fixtures/real/.
 set -euo pipefail
 
 POC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +28,7 @@ URL="http://127.0.0.1:$POC_HTTP_PORT"
 NODEQ="$POC_DIR/lib/nodeq.py"
 VERIFY_MANIFEST="$POC_DIR/verify/Cargo.toml"
 VERIFY_BIN="$POC_DIR/verify/target/release/pow-claim-verify"
-REAL_FIX="$REPO/rust/pow-claim-capture-module/rust-lib/pow-claim-core/tests/fixtures/real"
+REAL_FIX="$REPO/crates/pow-claim/tests/fixtures/real"
 GOLDEN="$POC_DIR/verify/tests/fixtures/golden.json"
 NODE_REV=2c652646d74354b2877620bf0bc53b4c4d3f18e4
 

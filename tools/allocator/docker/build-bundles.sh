@@ -14,9 +14,6 @@
 #   rln-gifter-module  keycard-auth-module  pow-claim-auth-module
 #   allowlist-auth-module (eth-, logos-, lez-allowlist verifiers)
 #   allowlist-sign-module (their producers)  pow-claim-capture-module
-# The pow-claim modules are untracked and share rust-lib/pow-claim-core; they
-# are rsync-staged exactly as tools/pow-claim-poc/build-module.sh does (that
-# script is not modified or invoked: its PoC drivers depend on it).
 #
 # Usage: build-bundles.sh [module-dir…]       (default: all six)
 # Env:   BUNDLES_OUT   (default <here>/bundles)
@@ -50,9 +47,7 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/rln-bundles.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 
 # Stage every module as a self-contained tree: the flakes only see tracked
-# files, the pow-claim modules are untracked, and the container must not see
-# host build outputs. The auth module's pow-claim-core is a copy of the
-# capture module's (single source of truth there) — resync before staging.
+# files, and the container must not see host build outputs.
 PRESENT=()
 for m in "${MODULES[@]}"; do
     if [ ! -d "$RUST/$m" ]; then
@@ -68,10 +63,6 @@ for m in "${MODULES[@]}"; do
         continue
     fi
     PRESENT+=("$m")
-    if [ "$m" = pow-claim-auth-module ] && [ -d "$RUST/pow-claim-capture-module/rust-lib/pow-claim-core" ]; then
-        rsync -a --delete --exclude target \
-            "$RUST/pow-claim-capture-module/rust-lib/pow-claim-core/" "$RUST/$m/rust-lib/pow-claim-core/"
-    fi
     rsync -a --delete \
         --exclude 'target' --exclude '**/target' --exclude 'result*' --exclude '.git' \
         --exclude 'logos-rust-sdk-src' --exclude 'rust-lib/generated' \

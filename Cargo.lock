@@ -1295,6 +1295,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pow-claim"
+version = "0.2.0"
+dependencies = [
+ "ark-ff",
+ "blake2",
+ "hex",
+ "logos-blockchain-groth16",
+ "logos-blockchain-poseidon2",
+ "rln_auth_vector",
+ "serde",
+ "serde_json",
+ "ureq",
+ "zksign_light",
+]
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"

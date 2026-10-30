@@ -6,8 +6,6 @@
 #   build-module.sh             -> prints the capture module's .lgx path
 #   build-module.sh --generate  -> also refreshes rust-lib/generated/provider_gen.rs
 #                                  from the builder's generated scaffold
-# For pow_claim_auth_module, rust-lib/pow-claim-core is first re-synced from
-# the capture module (the single source of truth for that crate).
 set -euo pipefail
 export PATH="$PATH:/nix/var/nix/profiles/default/bin"
 
@@ -26,11 +24,7 @@ done
 
 case "$module" in
   pow_claim_capture_module) mod="$rust/pow-claim-capture-module"; staged="$here/runs/src-pcm" ;;
-  pow_claim_auth_module)
-    mod="$rust/pow-claim-auth-module"; staged="$here/runs/src-pca"
-    rsync -a --delete --exclude target \
-      "$rust/pow-claim-capture-module/rust-lib/pow-claim-core/" "$mod/rust-lib/pow-claim-core/"
-    ;;
+  pow_claim_auth_module) mod="$rust/pow-claim-auth-module"; staged="$here/runs/src-pca" ;;
 esac
 mkdir -p "$staged"
 

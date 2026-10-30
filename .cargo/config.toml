@@ -9,3 +9,4 @@ rln_auth_vector = { path = "crates/rln-auth-vector" }
 zksign_light = { path = "crates/zksign-light" }
 keycard_attest = { path = "crates/keycard-attest" }
 keycard_client = { path = "crates/keycard-client" }
+pow-claim = { path = "crates/pow-claim" }
