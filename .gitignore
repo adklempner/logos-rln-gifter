@@ -5,3 +5,5 @@ tests/nim.cfg
 *.dylib
 *.so
 /target/
+.DS_Store
+.serena/
