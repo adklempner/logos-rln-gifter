@@ -7,8 +7,11 @@
 
 use std::any::Any;
 
+#[cfg(feature = "verify")]
 use keycard_attest::attest::{parse_attestation, tlv_len, verify_challenge};
-use rln_auth_vector::{strip_0x, Binding, Check, Decoded, Identity, Outcome, Scheme};
+use rln_auth_vector::{strip_0x, Identity};
+#[cfg(feature = "verify")]
+use rln_auth_vector::{Binding, Check, Decoded, Outcome, Scheme};
 
 pub const NAME: &str = "keycard";
 

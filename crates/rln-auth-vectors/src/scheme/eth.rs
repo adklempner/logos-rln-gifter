@@ -7,7 +7,9 @@
 use std::any::Any;
 
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
-use rln_auth_vector::{reason, Binding, Check, Decoded, Identity, Outcome, Scheme};
+use rln_auth_vector::Identity;
+#[cfg(feature = "verify")]
+use rln_auth_vector::{reason, Binding, Check, Decoded, Outcome, Scheme};
 
 pub const NAME: &str = "eth";
 /// `r ‖ s ‖ recid`, recid 0/1 (27/28 accepted on verify).

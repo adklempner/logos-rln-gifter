@@ -1,0 +1,23 @@
+{
+  "name": "rln_auth_module",
+  "version": "0.1.0",
+  "description": "The RLN gifter's verifier (rln_auth_vector verify_auth): every scheme × authoriser composition — eth/lez/logos/keycard-allowlist, keycard-attestation, logos-pow-claim",
+  "author": "Logos",
+  "type": "core",
+  "interface": "cdylib",
+  "category": "blockchain",
+  "main": "rln_auth_module_plugin",
+  "dependencies": [],
+  "include": [],
+  "capabilities": [],
+
+  "codegen": {
+    "rust": { "crate": "rust-lib", "trait": "RlnAuthModule" }
+  },
+
+  "nix": {
+    "external_libraries": [],
+    "packages": { "build": [], "runtime": [] },
+    "cmake": { "find_packages": [], "extra_include_dirs": [] }
+  }
+}

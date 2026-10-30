@@ -6,7 +6,9 @@
 
 use std::any::Any;
 
-use rln_auth_vector::{norm_hex32, Binding, Cfg, Check, Decoded, Identity, Outcome, Scheme};
+use rln_auth_vector::{norm_hex32, Identity};
+#[cfg(feature = "verify")]
+use rln_auth_vector::{Binding, Cfg, Check, Decoded, Outcome, Scheme};
 
 pub const NAME: &str = "logos";
 /// `K(32) ‖ zksig(128)`.

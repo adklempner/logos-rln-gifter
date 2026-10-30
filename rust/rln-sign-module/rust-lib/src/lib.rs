@@ -1,0 +1,775 @@
+// The RLN gifter's PRODUCER module: the client-side half of every auth
+// vector that needs no card hardware, so a membership module can drive any
+// of them through `auth_provider`:
+//   eth     EIP-191 by a module-owned secp256k1 key
+//   lez     BIP-340 by a module-owned LEZ account key
+//   logos   zkSign by a logos-blockchain node key (+ pow-claim discovery)
+// `identity` reports what an allocator operator allowlists per scheme.
+//
+// Key custody (eth, lez) is demo-grade on purpose: each key is a plaintext
+// hex file under the module's host-stamped persistence path (0600). Hosts
+// that stamp no path (logos-standalone-app) get in-memory keys that change
+// per run. The logos key never leaves the node's KMS.
+// FEATURE: RLN gifter auth vectors (produce)
+
+use std::sync::{Arc, Mutex};
+
+use rln_auth_vector::{dispatch_produce, AuthType, ProduceRegistry};
+use rln_auth_vectors::claimant::{AllowlistClaimant, AttestationClaimant, PowClaimant};
+use rln_auth_vectors::scheme::eth::address_of;
+use rln_auth_vectors::signer::logos::resolve_key;
+use rln_auth_vectors::signer::{EthSigner, KeySource, LezKey, LezSigner, LogosSigner, NodeArgs};
+use serde_json::{json, Value};
+use zksign_light::{HttpZkNode, ZkNode};
+
+pub trait RlnSignModule: Send + 'static {
+    /// rln_auth_vector PRODUCE_METHOD. One JSON-string arg (ProduceRequest)
+    /// → `{"payload_hex"}` or `{"error"}`. `auth_type` is
+    /// `<scheme>-<authoriser>` over the schemes eth, lez, logos and the
+    /// authorisers allowlist, attestation, pow-claim. eth and lez sign with
+    /// the module key of that scheme unless `args.private_key` (hex, optional
+    /// 0x) names another one; logos asks the node (`args`:
+    /// `{"node_url"?,"public_key"?,"http_timeout_ms"?}`); pow-claim finds the
+    /// claim on that node (`args.claim_address` etc.). Every vector binds
+    /// `args.rate_max` (default 100) and `args.audience` (default "").
+    /// `args` may be an object or a string holding one.
+    fn produce_auth(&mut self, args_json: String) -> String;
+    /// What an allocator operator allowlists for one scheme.
+    /// `{"scheme"|"auth_type","args"?}` → `{"scheme","id","persisted"}` plus
+    /// `"id_base58"` (lez) or `"source"` (logos; `args` as for produce).
+    /// Generates and persists the eth/lez module key on first use.
+    fn identity(&mut self, req_json: String) -> String;
+    /// Replace the eth or lez module key and persist it.
+    /// `{"scheme"|"auth_type","private_key","force"?}` → the identity object,
+    /// or `{"error"}` (logos keys live in the node's KMS; a different
+    /// persisted key is only replaced with `"force": true`).
+    fn import_key(&mut self, req_json: String) -> String;
+    fn on_context_ready(&mut self, _ctx: &RustModuleContext) {}
+}
+
+#[cfg(not(test))]
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/generated/provider_gen.rs"));
+
+// The unit tests never cross the C ABI; they only need the context shape.
+#[cfg(test)]
+#[derive(Debug, Clone, Default)]
+pub struct RustModuleContext {
+    pub module_path: String,
+    pub instance_id: String,
+    pub instance_persistence_path: String,
+}
+
+const LOGOS_IMPORT_REFUSAL: &str = "logos keys live in the node's KMS; nothing to import";
+
+/// The two module-owned key kinds, each persisted as one hex line.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Kind {
+    Eth,
+    Lez,
+}
+
+impl Kind {
+    fn file(self) -> &'static str {
+        match self {
+            Kind::Eth => "eth_sign_key.hex",
+            Kind::Lez => "lez_sign_key.hex",
+        }
+    }
+    fn scheme(self) -> &'static str {
+        match self {
+            Kind::Eth => "eth",
+            Kind::Lez => "lez",
+        }
+    }
+    fn parse(self, hex_str: &str) -> Result<[u8; 32], String> {
+        let bytes = hex::decode(rln_auth_vector::strip_0x(hex_str)).map_err(|e| format!("private key hex: {e}"))?;
+        let arr: [u8; 32] = bytes
+            .try_into()
+            .map_err(|b: Vec<u8>| format!("private key must be 32 bytes, got {}", b.len()))?;
+        match self {
+            Kind::Eth => {
+                k256::ecdsa::SigningKey::from_slice(&arr).map_err(|e| format!("private key: {e}"))?;
+            }
+            Kind::Lez => {
+                LezKey::parse(hex_str)?;
+            }
+        }
+        Ok(arr)
+    }
+    fn random(self) -> [u8; 32] {
+        match self {
+            Kind::Eth => k256::ecdsa::SigningKey::random(&mut rand_core::OsRng).to_bytes().into(),
+            Kind::Lez => LezKey::random().0,
+        }
+    }
+}
+
+fn key_path_in(persistence_path: &str, file: &str) -> Option<std::path::PathBuf> {
+    if persistence_path.is_empty() {
+        None
+    } else {
+        Some(std::path::Path::new(persistence_path).join(file))
+    }
+}
+
+#[cfg(unix)]
+fn set_owner_only(path: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("chmod 0600 {}: {e}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_owner_only(_: &std::path::Path) -> Result<(), String> {
+    Ok(())
+}
+
+/// Atomically (re)writes the key file: `FILE.tmp` (0600) → fsync → rename
+/// over FILE → chmod 0600, so a crash never leaves a truncated key and a
+/// pre-existing file with looser permissions ends up 0600.
+fn persist_key(persistence_path: &str, kind: Kind, key: &[u8; 32]) -> Result<(), String> {
+    let Some(path) = key_path_in(persistence_path, kind.file()) else { return Ok(()) };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    }
+    let tmp = path.with_file_name(format!("{}.tmp", kind.file()));
+    // A stale tmp may carry other permissions; mode() applies only on create.
+    let _ = std::fs::remove_file(&tmp);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    use std::io::Write;
+    let mut f = opts.open(&tmp).map_err(|e| format!("open {}: {e}", tmp.display()))?;
+    writeln!(f, "{}", hex::encode(key)).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    f.sync_all().map_err(|e| format!("sync {}: {e}", tmp.display()))?;
+    drop(f);
+    std::fs::rename(&tmp, &path).map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), path.display()))?;
+    set_owner_only(&path)
+}
+
+/// The key already persisted for `kind`, if any. An unreadable or
+/// unparseable file counts as "some other key" (`Err`), so it is only
+/// replaced with force.
+fn persisted_key(persistence_path: &str, kind: Kind) -> Option<Result<[u8; 32], String>> {
+    let p = key_path_in(persistence_path, kind.file())?;
+    if !p.exists() {
+        return None;
+    }
+    Some(
+        std::fs::read_to_string(&p)
+            .map_err(|e| format!("read {}: {e}", p.display()))
+            .and_then(|s| kind.parse(s.trim())),
+    )
+}
+
+/// The module's keys: the host-stamped persistence path and one cached key
+/// per kind. Shared by the module and its signers.
+#[derive(Default)]
+struct KeyStore {
+    persistence_path: Mutex<String>,
+    eth: Mutex<Option<[u8; 32]>>,
+    lez: Mutex<Option<[u8; 32]>>,
+}
+
+impl KeyStore {
+    fn slot(&self, kind: Kind) -> &Mutex<Option<[u8; 32]>> {
+        match kind {
+            Kind::Eth => &self.eth,
+            Kind::Lez => &self.lez,
+        }
+    }
+    fn path(&self) -> String {
+        self.persistence_path.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+    fn persisted(&self, kind: Kind) -> bool {
+        key_path_in(&self.path(), kind.file()).map(|p| p.exists()).unwrap_or(false)
+    }
+    fn cached(&self, kind: Kind) -> Option<[u8; 32]> {
+        *self.slot(kind).lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// The module key of `kind`: cached, else loaded from its key file, else
+    /// freshly generated (and persisted when a path exists).
+    fn module_key(&self, kind: Kind) -> Result<[u8; 32], String> {
+        let mut slot = self.slot(kind).lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(k) = *slot {
+            return Ok(k);
+        }
+        let path = self.path();
+        let key = match persisted_key(&path, kind) {
+            Some(r) => r.map_err(|e| format!("{}: {e}", kind.file()))?,
+            None => {
+                let k = kind.random();
+                persist_key(&path, kind, &k)?;
+                if path.is_empty() {
+                    eprintln!(
+                        "rln_sign_module: no persistence path — the {} signing key is in-memory and changes per run",
+                        kind.scheme()
+                    );
+                }
+                k
+            }
+        };
+        *slot = Some(key);
+        Ok(key)
+    }
+
+    /// Persists `key` unless a DIFFERENT key is already persisted and
+    /// `force` is false; the cache follows.
+    fn import(&self, kind: Kind, key: [u8; 32], force: bool) -> Result<(), String> {
+        let path = self.path();
+        let differs = match persisted_key(&path, kind) {
+            None => false,
+            Some(Ok(old)) => old != key,
+            Some(Err(_)) => true,
+        };
+        if differs && !force {
+            return Err(format!("a different {} key is already persisted; pass force:true to replace it", kind.scheme()));
+        }
+        persist_key(&path, kind, &key)?;
+        *self.slot(kind).lock().unwrap_or_else(|p| p.into_inner()) = Some(key);
+        Ok(())
+    }
+}
+
+/// A signer's view of the store: the module key of one kind (the signer
+/// itself honours `args.private_key` first).
+struct ModuleKeySource {
+    store: Arc<KeyStore>,
+    kind: Kind,
+}
+
+impl KeySource for ModuleKeySource {
+    fn key(&self, _args: Option<&Value>) -> Result<[u8; 32], String> {
+        self.store.module_key(self.kind)
+    }
+}
+
+/// A node shared between the logos signer and `identity` (tests).
+#[derive(Clone)]
+struct SharedNode(Arc<dyn ZkNode + Send + Sync>);
+
+impl ZkNode for SharedNode {
+    fn pow_status(&self) -> Result<Value, String> {
+        self.0.pow_status()
+    }
+    fn sign_zk(&self, digest: &[u8; 32], pk_hex: &str) -> Result<[u8; 128], String> {
+        self.0.sign_zk(digest, pk_hex)
+    }
+}
+
+struct RlnSign {
+    store: Arc<KeyStore>,
+    registry: ProduceRegistry,
+    test_node: Option<SharedNode>,
+}
+
+impl Default for RlnSign {
+    fn default() -> Self {
+        RlnSign::with_node(None)
+    }
+}
+
+/// `{"scheme"|"auth_type", …}` → (scheme, the whole request).
+fn parse_scheme_request(req_json: &str, what: &str) -> Result<(String, Value), String> {
+    let v: Value = serde_json::from_str(req_json).map_err(|e| format!("{what}: {e}"))?;
+    if let Some(s) = v.get("scheme").and_then(Value::as_str) {
+        return Ok((s.to_string(), v));
+    }
+    let t = v
+        .get("auth_type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{what}: scheme (or auth_type) is required"))?;
+    Ok((AuthType::parse(t)?.scheme, v))
+}
+
+fn unknown_scheme(s: &str) -> String {
+    format!("unknown scheme '{s}' on this module")
+}
+
+impl RlnSign {
+    /// `node` overrides the http node of the logos signer (tests).
+    fn with_node(node: Option<Arc<dyn ZkNode + Send + Sync>>) -> Self {
+        let store = Arc::new(KeyStore::default());
+        let test_node = node.map(SharedNode);
+        let registry = ProduceRegistry::new()
+            .signer(EthSigner(Box::new(ModuleKeySource { store: store.clone(), kind: Kind::Eth })))
+            .signer(LezSigner(Box::new(ModuleKeySource { store: store.clone(), kind: Kind::Lez })))
+            .signer(LogosSigner { node: test_node.clone().map(|n| Box::new(n) as Box<dyn ZkNode + Send + Sync>) })
+            .claimant(AllowlistClaimant)
+            .claimant(AttestationClaimant)
+            .claimant(PowClaimant::http());
+        RlnSign { store, registry, test_node }
+    }
+
+    fn eth_identity(&self, key: &[u8; 32]) -> Result<Value, String> {
+        let sk = k256::ecdsa::SigningKey::from_slice(key).map_err(|e| format!("private key: {e}"))?;
+        Ok(json!({ "scheme": "eth", "id": address_of(sk.verifying_key()), "persisted": self.store.persisted(Kind::Eth) }))
+    }
+
+    fn lez_identity(&self, key: &[u8; 32]) -> Value {
+        let id = LezKey(*key).identity_json();
+        json!({
+            "scheme": "lez",
+            "id": id["account_id"],
+            "id_base58": id["account_id_base58"],
+            "persisted": self.store.persisted(Kind::Lez),
+        })
+    }
+
+    fn identity_impl(&mut self, req_json: &str) -> Result<String, String> {
+        let (scheme, req) = parse_scheme_request(req_json, "identity")?;
+        let mut out = match scheme.as_str() {
+            "eth" => self.eth_identity(&self.store.module_key(Kind::Eth)?)?,
+            "lez" => self.lez_identity(&self.store.module_key(Kind::Lez)?),
+            "logos" => {
+                let args = NodeArgs::parse(req.get("args"))?;
+                let (k, source) = match &self.test_node {
+                    Some(n) => resolve_key(n, &args)?,
+                    None => resolve_key(&HttpZkNode { url: args.node_url.clone(), timeout_ms: args.http_timeout_ms }, &args)?,
+                };
+                // The key is held durably by the node's KMS.
+                json!({ "scheme": "logos", "id": k, "source": source, "persisted": true })
+            }
+            other => return Err(unknown_scheme(other)),
+        };
+        if let Some(t) = req.get("auth_type") {
+            out["auth_type"] = t.clone();
+        }
+        Ok(out.to_string())
+    }
+
+    fn import_impl(&mut self, req_json: &str) -> Result<String, String> {
+        let (scheme, req) = parse_scheme_request(req_json, "import_key")?;
+        let kind = match scheme.as_str() {
+            "eth" => Kind::Eth,
+            "lez" => Kind::Lez,
+            "logos" => return Err(LOGOS_IMPORT_REFUSAL.into()),
+            other => return Err(unknown_scheme(other)),
+        };
+        let pk = req
+            .get("private_key")
+            .and_then(Value::as_str)
+            .ok_or("import_key: private_key (hex string) is required")?;
+        let force = match req.get("force") {
+            None | Some(Value::Null) => false,
+            Some(Value::Bool(b)) => *b,
+            Some(v) => return Err(format!("import_key: force must be a boolean, got {v}")),
+        };
+        let key = kind.parse(pk)?;
+        self.store.import(kind, key, force)?;
+        let out = match kind {
+            Kind::Eth => self.eth_identity(&key)?,
+            Kind::Lez => self.lez_identity(&key),
+        };
+        Ok(out.to_string())
+    }
+}
+
+fn error_json(e: String) -> String {
+    json!({ "error": e }).to_string()
+}
+
+impl RlnSignModule for RlnSign {
+    // Plain String (not Result): codegen maps Result to LogosResult, which the
+    // host nulls through the UI bridge; errors travel as {"error":...}.
+    fn produce_auth(&mut self, args_json: String) -> String {
+        dispatch_produce(&args_json, &self.registry)
+    }
+    fn identity(&mut self, req_json: String) -> String {
+        self.identity_impl(&req_json).unwrap_or_else(error_json)
+    }
+    fn import_key(&mut self, req_json: String) -> String {
+        self.import_impl(&req_json).unwrap_or_else(error_json)
+    }
+    fn on_context_ready(&mut self, ctx: &RustModuleContext) {
+        *self.store.persistence_path.lock().unwrap_or_else(|p| p.into_inner()) = ctx.instance_persistence_path.clone();
+        *self.store.eth.lock().unwrap_or_else(|p| p.into_inner()) = None;
+        *self.store.lez.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+}
+
+#[cfg(not(test))]
+#[no_mangle]
+pub extern "Rust" fn logos_module_install() {
+    install::<RlnSign>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rln_auth_vector::{dispatch_verify, VerifyRegistry};
+    use rln_auth_vectors::authoriser::Allowlist;
+    use rln_auth_vectors::scheme::{Eth, Lez, Logos};
+
+    const IDC: &str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+    const PK42: &str = "0x4242424242424242424242424242424242424242424242424242424242424242";
+    const ADDR42: &str = "0x17c5185167401ed00cf5f5b2fc97d9bbfdb7d025";
+    const SK3: &str = "0x0000000000000000000000000000000000000000000000000000000000000003";
+    const ACCT3_HEX: &str = "ec2cbcd4488075c4b30678c30351327fdf99f3fe703edc2999b68f8fd12bdbc8";
+    const ACCT3_B58: &str = "GtvnQVLsv8V34E3X9hMBR9hsUokapUgiE4o7vCU4VMB5";
+    const K: &str = "e3635f207984ae779cf76b5f20714b514373f61ff96260879fe0a6d71f2dce07";
+    const K2: &str = "0100000000000000000000000000000000000000000000000000000000000000";
+    const ETH_KEY_FILE: &str = "eth_sign_key.hex";
+    const LEZ_KEY_FILE: &str = "lez_sign_key.hex";
+
+    struct FakeNode {
+        targets: Vec<&'static str>,
+        signed: Mutex<usize>,
+    }
+    impl FakeNode {
+        fn new(targets: Vec<&'static str>) -> Arc<FakeNode> {
+            Arc::new(FakeNode { targets, signed: Mutex::new(0) })
+        }
+    }
+    impl ZkNode for FakeNode {
+        fn pow_status(&self) -> Result<Value, String> {
+            let t: Vec<Value> = self.targets.iter().map(|k| json!({ "public_key": k })).collect();
+            Ok(json!({ "auto_claim": { "targets": t } }))
+        }
+        fn sign_zk(&self, _digest: &[u8; 32], _pk_hex: &str) -> Result<[u8; 128], String> {
+            *self.signed.lock().unwrap() += 1;
+            Ok([0xab; 128])
+        }
+    }
+
+    fn tmpdir(name: &str) -> String {
+        let p = std::env::temp_dir().join(format!("rln-sign-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        p.to_string_lossy().into_owned()
+    }
+
+    fn produce_req(auth_type: &str, idc: &str, args: Option<Value>) -> String {
+        let mut v = json!({ "auth_type": auth_type, "id_commitment_hex": idc });
+        if let Some(a) = args {
+            v["args"] = a;
+        }
+        v.to_string()
+    }
+
+    fn parse(s: String) -> Value {
+        serde_json::from_str(&s).unwrap_or_else(|e| panic!("{e}: {s}"))
+    }
+
+    fn identity(m: &mut RlnSign, scheme: &str) -> Value {
+        parse(m.identity(json!({ "scheme": scheme }).to_string()))
+    }
+
+    fn import(m: &mut RlnSign, scheme: &str, pk: &str) -> String {
+        m.import_key(json!({ "scheme": scheme, "private_key": pk }).to_string())
+    }
+
+    fn import_force(m: &mut RlnSign, scheme: &str, pk: &str) -> String {
+        m.import_key(json!({ "scheme": scheme, "private_key": pk, "force": true }).to_string())
+    }
+
+    fn with_ctx(dir: &str) -> RlnSign {
+        let mut m = RlnSign::default();
+        m.on_context_ready(&RustModuleContext { instance_persistence_path: dir.into(), ..Default::default() });
+        m
+    }
+
+    /// The verify side, with `id` allowlisted: the nullifier is the identity.
+    fn verified(auth_type: &str, payload_hex: &str, id: &str, args: Value) -> Value {
+        let r = VerifyRegistry::new().scheme(Eth).scheme(Lez).scheme(Logos).authoriser(Allowlist);
+        let cfg = json!({ "allowlist": [id], "audience": args.get("audience").cloned().unwrap_or(json!("")) });
+        let req = json!({ "auth_type": auth_type, "payload_hex": payload_hex, "id_commitment_hex": IDC,
+            "rate": args.get("rate_max").cloned().unwrap_or(json!(100)), "config": cfg });
+        serde_json::from_str(&dispatch_verify(&req.to_string(), &r)).unwrap()
+    }
+
+    fn payload_of(reply: String) -> String {
+        let v = parse(reply);
+        v["payload_hex"].as_str().unwrap_or_else(|| panic!("{v}")).to_string()
+    }
+
+    // ---- eth ----
+
+    #[test]
+    fn eth_module_key_signature_verifies_to_address() {
+        let mut m = RlnSign::default();
+        let id = identity(&mut m, "eth");
+        assert_eq!(id["persisted"], false);
+        let payload = payload_of(m.produce_auth(produce_req("eth-allowlist", IDC, None)));
+        assert_eq!(payload.len(), (1 + 65 + 8) * 2);
+        let v = verified("eth-allowlist", &payload, id["id"].as_str().unwrap(), json!({}));
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(v["nullifier"], id["id"]);
+    }
+
+    #[test]
+    fn eth_private_key_override_is_honoured() {
+        let mut m = RlnSign::default();
+        let module_addr = identity(&mut m, "eth");
+        let payload = payload_of(m.produce_auth(produce_req("eth-allowlist", IDC, Some(json!({ "private_key": PK42 })))));
+        let v = verified("eth-allowlist", &payload, ADDR42, json!({}));
+        assert_eq!(v["ok"], true, "{v}");
+        assert_ne!(module_addr["id"], ADDR42);
+    }
+
+    #[test]
+    fn eth_malformed_requests_are_errors() {
+        let mut m = RlnSign::default();
+        let wrong_type = m.produce_auth(json!({ "auth_type": "keycard-attestation", "id_commitment_hex": IDC }).to_string());
+        assert!(wrong_type.contains("no keycard signer"), "got: {wrong_type}");
+        let short = m.produce_auth(produce_req("eth-allowlist", "abcd", None));
+        assert!(short.contains("id_commitment_hex"), "got: {short}");
+        let bad_override = m.produce_auth(produce_req("eth-allowlist", IDC, Some(json!({ "private_key": "zz" }))));
+        assert!(bad_override.contains("private key hex"), "got: {bad_override}");
+        assert!(import(&mut m, "eth", "0x00").contains("\"error\""));
+    }
+
+    #[test]
+    fn eth_key_persists_across_instances_and_import_replaces_it() {
+        let dir = tmpdir("eth-persist");
+        let mut a = with_ctx(&dir);
+        let first = identity(&mut a, "eth");
+        assert_eq!(first["persisted"], true);
+        let key_file = std::path::Path::new(&dir).join(ETH_KEY_FILE);
+        assert!(key_file.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&key_file).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+
+        let mut b = with_ctx(&dir);
+        let again = identity(&mut b, "eth");
+        assert_eq!(again["id"], first["id"], "same path, same key");
+
+        let refused = parse(import(&mut b, "eth", PK42));
+        assert_eq!(refused["error"], "a different eth key is already persisted; pass force:true to replace it");
+        assert_eq!(identity(&mut b, "eth")["id"], first["id"], "refused import changes nothing");
+        let imported = parse(import_force(&mut b, "eth", PK42));
+        assert_eq!(imported["id"], ADDR42);
+        assert_eq!(parse(import(&mut b, "eth", PK42))["id"], ADDR42, "same key needs no force");
+        let mut c = with_ctx(&dir);
+        let after = identity(&mut c, "eth");
+        assert_eq!(after["id"], ADDR42, "import is persisted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- lez ----
+
+    #[test]
+    fn lez_module_key_signature_verifies_to_account_id() {
+        let mut m = RlnSign::default();
+        let id = identity(&mut m, "lez");
+        assert_eq!(id["persisted"], false);
+        let payload = payload_of(m.produce_auth(produce_req("lez-allowlist", IDC, None)));
+        assert_eq!(payload.len(), (1 + 96 + 8) * 2);
+        let v = verified("lez-allowlist", &payload, id["id"].as_str().unwrap(), json!({}));
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(v["nullifier"], id["id"]);
+    }
+
+    #[test]
+    fn lez_private_key_override_is_honoured() {
+        let mut m = RlnSign::default();
+        let module_id = identity(&mut m, "lez");
+        let payload = payload_of(m.produce_auth(produce_req("lez-allowlist", IDC, Some(json!({ "private_key": SK3 })))));
+        let v = verified("lez-allowlist", &payload, ACCT3_HEX, json!({}));
+        assert_eq!(v["ok"], true, "{v}");
+        assert_ne!(module_id["id"], ACCT3_HEX);
+    }
+
+    #[test]
+    fn lez_malformed_requests_are_errors() {
+        let mut m = RlnSign::default();
+        let short = m.produce_auth(produce_req("lez-allowlist", "abcd", None));
+        assert!(short.contains("id_commitment_hex"), "got: {short}");
+        let bad_override = m.produce_auth(produce_req("lez-allowlist", IDC, Some(json!({ "private_key": "zz" }))));
+        assert!(bad_override.contains("private key hex"), "got: {bad_override}");
+        assert!(import(&mut m, "lez", "0x00").contains("\"error\""));
+        assert!(import(&mut m, "lez", &format!("0x{}", "00".repeat(32))).contains("\"error\""));
+    }
+
+    #[test]
+    fn lez_key_persists_across_instances_and_import_replaces_it() {
+        let dir = tmpdir("lez-persist");
+        let mut a = with_ctx(&dir);
+        let first = identity(&mut a, "lez");
+        assert_eq!(first["persisted"], true);
+        let key_file = std::path::Path::new(&dir).join(LEZ_KEY_FILE);
+        assert!(key_file.exists());
+
+        let mut b = with_ctx(&dir);
+        assert_eq!(identity(&mut b, "lez")["id"], first["id"], "same path, same key");
+        assert!(import(&mut b, "lez", SK3).contains("pass force:true"));
+        let imported = parse(import_force(&mut b, "lez", SK3));
+        assert_eq!(imported["id"], ACCT3_HEX);
+        let mut c = with_ctx(&dir);
+        let after = identity(&mut c, "lez");
+        assert_eq!(after["id"], ACCT3_HEX, "import is persisted");
+        assert_eq!(after["id_base58"], ACCT3_B58);
+        assert_eq!(std::fs::read_to_string(&key_file).unwrap().trim(), SK3.trim_start_matches("0x"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- logos ----
+
+    #[test]
+    fn logos_unreachable_node_is_an_error() {
+        let mut m = RlnSign::default();
+        let e = m.identity(json!({ "scheme": "logos", "args": { "node_url": "http://127.0.0.1:1", "http_timeout_ms": 500 } }).to_string());
+        assert!(e.contains("\"error\"") && e.contains("/pow/status"), "{e}");
+    }
+
+    // ---- routing ----
+
+    #[test]
+    fn identity_routes_per_scheme() {
+        let mut m = RlnSign::with_node(Some(FakeNode::new(vec![K])));
+        let eth = identity(&mut m, "eth");
+        assert_eq!(eth["scheme"], "eth");
+        let addr = eth["id"].as_str().unwrap();
+        assert!(addr.starts_with("0x") && addr.len() == 42 && addr == addr.to_lowercase(), "{addr}");
+        assert!(eth.get("id_base58").is_none() && eth.get("source").is_none());
+
+        let lez = parse(m.identity(json!({ "auth_type": "lez-allowlist" }).to_string()));
+        assert_eq!(lez["scheme"], "lez");
+        assert_eq!(lez["auth_type"], "lez-allowlist");
+        let hex_id = lez["id"].as_str().unwrap();
+        assert_eq!(hex_id.len(), 64);
+        use base58::FromBase58;
+        let b58 = lez["id_base58"].as_str().unwrap().from_base58().unwrap();
+        assert_eq!(hex::encode(b58), hex_id);
+
+        let logos = identity(&mut m, "logos");
+        assert_eq!(logos, json!({ "scheme": "logos", "id": K, "source": "pow_status", "persisted": true }));
+        let logos = parse(m.identity(json!({ "scheme": "logos", "args": { "public_key": K2 } }).to_string()));
+        assert_eq!(logos["id"], K2);
+        assert_eq!(logos["source"], "args");
+
+        let e = m.identity(json!({ "scheme": "keycard" }).to_string());
+        assert!(e.contains("unknown scheme"), "{e}");
+        assert!(m.identity("{}".into()).contains("scheme"));
+    }
+
+    #[test]
+    fn produce_routes_per_auth_type() {
+        let node = FakeNode::new(vec![K]);
+        let mut m = RlnSign::with_node(Some(node.clone()));
+        let eth = payload_of(m.produce_auth(produce_req("eth-allowlist", IDC, None)));
+        assert_eq!(eth.len(), (1 + 65 + 8) * 2);
+        let lez = payload_of(m.produce_auth(produce_req("lez-allowlist", IDC, None)));
+        assert_eq!(lez.len(), (1 + 96 + 8) * 2);
+        assert_eq!(*node.signed.lock().unwrap(), 0, "eth/lez must not touch the node");
+        let logos = payload_of(m.produce_auth(produce_req("logos-allowlist", IDC, None)));
+        assert_eq!(logos.len(), (1 + 160 + 8) * 2);
+        assert_eq!(&logos[2..66], K);
+        assert_eq!(*node.signed.lock().unwrap(), 1);
+        let v = verified("logos-allowlist", &logos, K, json!({}));
+        assert!(v["reason"].as_str().unwrap().contains("zkSign signature invalid"), "fake proof, listed key: {v}");
+    }
+
+    #[test]
+    fn import_refuses_logos_and_unknown_schemes() {
+        let mut m = RlnSign::default();
+        let e = parse(import(&mut m, "logos", PK42));
+        assert_eq!(e, json!({ "error": LOGOS_IMPORT_REFUSAL }));
+        assert!(import(&mut m, "keycard", PK42).contains("unknown scheme"));
+        assert!(m.import_key(json!({ "scheme": "eth" }).to_string()).contains("private_key"));
+        assert!(m.import_key(json!({ "auth_type": "eth-allowlist", "private_key": PK42 }).to_string()).contains(ADDR42));
+    }
+
+    #[test]
+    fn eth_import_does_not_touch_the_lez_key() {
+        let dir = tmpdir("separate");
+        let mut a = with_ctx(&dir);
+        let lez_before = identity(&mut a, "lez");
+        let lez_file = std::path::Path::new(&dir).join(LEZ_KEY_FILE);
+        let lez_bytes = std::fs::read_to_string(&lez_file).unwrap();
+
+        let imported = parse(import(&mut a, "eth", PK42));
+        assert_eq!(imported, json!({ "scheme": "eth", "id": ADDR42, "persisted": true }));
+        assert_eq!(identity(&mut a, "lez"), lez_before);
+        assert_eq!(std::fs::read_to_string(&lez_file).unwrap(), lez_bytes);
+
+        let mut b = with_ctx(&dir);
+        assert_eq!(identity(&mut b, "lez")["id"], lez_before["id"]);
+        assert_eq!(identity(&mut b, "eth")["id"], ADDR42);
+
+        // And the other way round: a lez import leaves the eth key alone.
+        let lez = parse(import_force(&mut b, "lez", SK3));
+        assert_eq!(lez["id"], ACCT3_HEX);
+        assert_eq!(lez["id_base58"], ACCT3_B58);
+        assert_eq!(identity(&mut b, "eth")["id"], ADDR42);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loose_permissions_on_an_existing_key_file_end_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmpdir("perms");
+        std::fs::create_dir_all(&dir).unwrap();
+        let key_file = std::path::Path::new(&dir).join(ETH_KEY_FILE);
+        std::fs::write(&key_file, format!("{}\n", PK42.trim_start_matches("0x"))).unwrap();
+        std::fs::set_permissions(&key_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        // A stale tmp with loose permissions must not leak them either.
+        let tmp = std::path::Path::new(&dir).join(format!("{ETH_KEY_FILE}.tmp"));
+        std::fs::write(&tmp, "junk").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut m = with_ctx(&dir);
+        assert_eq!(parse(import(&mut m, "eth", PK42))["id"], ADDR42, "same key, no force needed");
+        assert_eq!(std::fs::metadata(&key_file).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(!tmp.exists(), "tmp is renamed over the key file");
+        assert_eq!(std::fs::read_to_string(&key_file).unwrap().trim(), PK42.trim_start_matches("0x"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persist_creates_missing_parent_dirs() {
+        let dir = format!("{}/nested/deeper", tmpdir("mkdir"));
+        let mut m = with_ctx(&dir);
+        assert_eq!(identity(&mut m, "lez")["persisted"], true);
+        assert!(std::path::Path::new(&dir).join(LEZ_KEY_FILE).exists());
+        let _ = std::fs::remove_dir_all(std::path::Path::new(&dir).parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn import_over_an_unparseable_key_file_needs_force() {
+        let dir = tmpdir("garbage");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(std::path::Path::new(&dir).join(LEZ_KEY_FILE), "not hex\n").unwrap();
+        let mut m = with_ctx(&dir);
+        assert!(import(&mut m, "lez", SK3).contains("pass force:true"));
+        assert_eq!(parse(import_force(&mut m, "lez", SK3))["id"], ACCT3_HEX);
+        assert!(m.import_key(json!({ "scheme": "lez", "private_key": SK3, "force": "yes" }).to_string())
+            .contains("force must be a boolean"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stringified_args_private_key_is_honoured() {
+        let mut m = RlnSign::default();
+        let args = Value::String(json!({ "private_key": PK42 }).to_string());
+        let payload = payload_of(m.produce_auth(produce_req("eth-allowlist", IDC, Some(args))));
+        assert_eq!(verified("eth-allowlist", &payload, ADDR42, json!({}))["ok"], true);
+        assert!(m.store.cached(Kind::Eth).is_none(), "the module key is not resolved when overridden");
+
+        let args = Value::String(json!({ "private_key": SK3, "rate_max": 5 }).to_string());
+        let payload = payload_of(m.produce_auth(produce_req("lez-allowlist", IDC, Some(args))));
+        assert_eq!(&payload[payload.len() - 16..], hex::encode(5u64.to_le_bytes()));
+        assert_eq!(verified("lez-allowlist", &payload, ACCT3_HEX, json!({ "rate_max": 5 }))["ok"], true);
+
+        let bad = m.produce_auth(produce_req("eth-allowlist", IDC, Some(json!("[1]"))));
+        assert!(bad.contains("expected JSON object"), "{bad}");
+    }
+
+    #[test]
+    fn in_memory_keys_are_per_kind() {
+        let mut m = RlnSign::default();
+        assert!(m.store.cached(Kind::Eth).is_none() && m.store.cached(Kind::Lez).is_none());
+        identity(&mut m, "eth");
+        assert!(m.store.cached(Kind::Eth).is_some() && m.store.cached(Kind::Lez).is_none(), "only the requested kind's key is generated");
+        let _ = m.produce_auth(produce_req("logos-allowlist", "abcd", None));
+        assert!(m.store.cached(Kind::Lez).is_none());
+    }
+}

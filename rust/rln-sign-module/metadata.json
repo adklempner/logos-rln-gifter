@@ -1,0 +1,23 @@
+{
+  "name": "rln_sign_module",
+  "version": "0.1.0",
+  "description": "The RLN gifter's producer (rln_auth_vector produce_auth): eth and lez module-owned keys, logos zkSign by a node key, pow-claim discovery — every composition but the PC/SC keycard",
+  "author": "Logos",
+  "type": "core",
+  "interface": "cdylib",
+  "category": "blockchain",
+  "main": "rln_sign_module_plugin",
+  "dependencies": [],
+  "include": [],
+  "capabilities": [],
+
+  "codegen": {
+    "rust": { "crate": "rust-lib", "trait": "RlnSignModule" }
+  },
+
+  "nix": {
+    "external_libraries": [],
+    "packages": { "build": [], "runtime": [] },
+    "cmake": { "find_packages": [], "extra_include_dirs": [] }
+  }
+}

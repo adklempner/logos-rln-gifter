@@ -6,9 +6,13 @@
 use std::any::Any;
 
 use base58::FromBase58;
+#[cfg(feature = "verify")]
 use k256::schnorr::signature::hazmat::PrehashVerifier;
+#[cfg(feature = "verify")]
 use k256::schnorr::{Signature, VerifyingKey};
-use rln_auth_vector::{reason, strip_0x, Binding, Check, Decoded, Identity, Outcome, Scheme};
+use rln_auth_vector::{strip_0x, Identity};
+#[cfg(feature = "verify")]
+use rln_auth_vector::{reason, Binding, Check, Decoded, Outcome, Scheme};
 use sha2::{Digest, Sha256};
 
 pub const NAME: &str = "lez";

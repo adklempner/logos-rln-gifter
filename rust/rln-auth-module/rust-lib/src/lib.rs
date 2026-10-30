@@ -1,0 +1,159 @@
+// The RLN gifter's VERIFIER module: every scheme × authoriser composition
+// this repo ships, answered from one registry. The gifter calls
+// `verify_auth` with the rln_auth_vector VerifyRequest; its `auth_type`
+// (`<scheme>-<authoriser>`) picks the two halves, the authoriser reads its
+// own config. Nullifiers are the authoriser's; the gifter namespaces and
+// persists them.
+// FEATURE: RLN gifter auth vectors (verify)
+
+use std::sync::OnceLock;
+
+use rln_auth_vector::{dispatch_verify, VerifyRegistry};
+use rln_auth_vectors::authoriser::{Allowlist, Attestation, PowClaim};
+use rln_auth_vectors::scheme::{Eth, Keycard, Lez, Logos};
+
+pub trait RlnAuthModule: Send + 'static {
+    /// rln_auth_vector VERIFY_METHOD. One JSON-string arg (VerifyRequest);
+    /// `auth_type` is `<scheme>-<authoriser>` over the schemes eth, lez,
+    /// logos, keycard and the authorisers allowlist, attestation, pow-claim
+    /// (see `supported_auth_types`). `{"ok", "reason"?, "nullifier"?}` or
+    /// `{"error"}` (malformed request, unknown composition, bad config).
+    fn verify_auth(&mut self, args_json: String) -> String;
+    /// The `auth_type`s this module answers, as a JSON array (what an
+    /// allocator advertises).
+    fn supported_auth_types(&mut self) -> String;
+    fn on_context_ready(&mut self, _ctx: &RustModuleContext) {}
+}
+
+#[cfg(not(test))]
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/generated/provider_gen.rs"));
+
+// The unit tests never cross the C ABI; they only need the context shape.
+#[cfg(test)]
+#[derive(Debug, Clone, Default)]
+pub struct RustModuleContext {
+    pub module_path: String,
+    pub instance_id: String,
+    pub instance_persistence_path: String,
+}
+
+fn registry() -> &'static VerifyRegistry {
+    static R: OnceLock<VerifyRegistry> = OnceLock::new();
+    R.get_or_init(|| {
+        VerifyRegistry::new()
+            .scheme(Eth)
+            .scheme(Lez)
+            .scheme(Logos)
+            .scheme(Keycard)
+            .authoriser(Allowlist)
+            .authoriser(Attestation)
+            .authoriser(PowClaim)
+    })
+}
+
+#[derive(Default)]
+struct RlnAuth {}
+
+impl RlnAuthModule for RlnAuth {
+    // Plain String (not Result): codegen maps Result to LogosResult, which the
+    // host nulls through the UI bridge; errors travel as {"error":...}.
+    fn verify_auth(&mut self, args_json: String) -> String {
+        dispatch_verify(&args_json, registry())
+    }
+    fn supported_auth_types(&mut self) -> String {
+        serde_json::to_string(&registry().auth_types()).unwrap_or_else(|_| "[]".into())
+    }
+}
+
+#[cfg(not(test))]
+#[no_mangle]
+pub extern "Rust" fn logos_module_install() {
+    install::<RlnAuth>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rln_auth_vector::{dispatch_produce, ProduceRegistry};
+    use rln_auth_vectors::claimant::AllowlistClaimant;
+    use rln_auth_vectors::signer::{EthSigner, LezSigner, StaticKey};
+    use serde_json::{json, Value};
+
+    const IDC: &str = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+    const ADDR42: &str = "0x17c5185167401ed00cf5f5b2fc97d9bbfdb7d025";
+    const PK0_ACCT_HEX: &str = "ec2cbcd4488075c4b30678c30351327fdf99f3fe703edc2999b68f8fd12bdbc8";
+
+    fn call(req: Value) -> Value {
+        serde_json::from_str(&RlnAuth::default().verify_auth(req.to_string())).unwrap()
+    }
+
+    fn produced(auth_type: &str) -> String {
+        let mut sk3 = [0u8; 32];
+        sk3[31] = 3;
+        let r = ProduceRegistry::new()
+            .signer(EthSigner(Box::new(StaticKey([0x42; 32]))))
+            .signer(LezSigner(Box::new(StaticKey(sk3))))
+            .claimant(AllowlistClaimant);
+        let req = json!({ "auth_type": auth_type, "id_commitment_hex": IDC });
+        let out: Value = serde_json::from_str(&dispatch_produce(&req.to_string(), &r)).unwrap();
+        out["payload_hex"].as_str().unwrap_or_else(|| panic!("{out}")).to_string()
+    }
+
+    #[test]
+    fn supported_auth_types_are_the_six_compositions() {
+        let list: Vec<String> = serde_json::from_str(&RlnAuth::default().supported_auth_types()).unwrap();
+        assert_eq!(list, ["eth-allowlist", "lez-allowlist", "logos-allowlist", "logos-pow-claim", "keycard-allowlist", "keycard-attestation"]);
+    }
+
+    #[test]
+    fn each_scheme_decodes_its_own_part() {
+        // A canonical little-endian scalar: 1.
+        let mut one = [0u8; 32];
+        one[0] = 1;
+        let cases = [
+            ("eth-allowlist", json!({ "allowlist": ["0x0000000000000000000000000000000000000001"] }), "eth part"),
+            ("lez-allowlist", json!({ "allowlist": ["33".repeat(32)] }), "lez part"),
+            ("logos-allowlist", json!({ "allowlist": [hex::encode(one)] }), "logos part"),
+            ("keycard-allowlist", json!({ "allowlist": [format!("02{}", "11".repeat(32))] }), "attestation parse failed"),
+        ];
+        for (auth_type, config, needle) in cases {
+            // A framed payload whose body is 10 garbage bytes.
+            let mut body = vec![2u8];
+            body.extend_from_slice(&[0xaa; 10]);
+            body.extend_from_slice(&100u64.to_le_bytes());
+            let out = call(json!({
+                "auth_type": auth_type, "payload_hex": hex::encode(&body),
+                "id_commitment_hex": IDC, "rate": 100, "config": config,
+            }));
+            assert_eq!(out["ok"], false, "{auth_type}: {out}");
+            let reason = out["reason"].as_str().unwrap_or_else(|| panic!("{auth_type}: {out}"));
+            assert!(reason.contains(needle), "{auth_type}: {reason}");
+        }
+    }
+
+    #[test]
+    fn eth_and_lez_accept_through_the_module() {
+        let out = call(json!({
+            "auth_type": "eth-allowlist", "payload_hex": produced("eth-allowlist"),
+            "id_commitment_hex": IDC, "rate": 100, "config": { "allowlist": [ADDR42] },
+        }));
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(out["nullifier"], ADDR42);
+
+        let out = call(json!({
+            "auth_type": "lez-allowlist", "payload_hex": produced("lez-allowlist"),
+            "id_commitment_hex": IDC, "rate": 100, "config": { "allowlist": [PK0_ACCT_HEX] },
+        }));
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(out["nullifier"], PK0_ACCT_HEX);
+    }
+
+    #[test]
+    fn unknown_and_refused_compositions_use_the_error_envelope() {
+        let out = call(json!({ "auth_type": "nope-allowlist", "payload_hex": "00", "id_commitment_hex": IDC, "rate": 100 }));
+        assert!(out.get("ok").is_none(), "{out}");
+        assert!(out["error"].as_str().unwrap().contains("unknown auth_type"), "{out}");
+        let out = call(json!({ "auth_type": "eth-attestation", "payload_hex": "00", "id_commitment_hex": IDC, "rate": 100 }));
+        assert!(out["error"].as_str().unwrap().contains("does not accept the eth scheme"), "{out}");
+    }
+}
