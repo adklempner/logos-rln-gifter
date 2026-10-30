@@ -1,16 +1,15 @@
-//! Verifier over the recorded real-node fixtures (`tests/fixtures/real`,
-//! node 0.3.0-rc.5): known answers, accept, reject matrix and operator errors.
+//! Chain checks over the recorded real-node fixtures (`tests/fixtures/real`,
+//! node 0.3.0-rc.5): known answers, accept, the reject matrix and operator
+//! errors. The signature half is the logos scheme's (rln_auth_vectors).
 
-use pow_claim::{node::testing::FakeNode, Payload};
-use pow_claim::verify::{default_vk, verify_request, verify_with, Config, Verdict, VerifyRequest};
+use pow_claim::verify::{check, check_claim, Config};
+use pow_claim::{node::testing::FakeNode, Claim, Evidence};
 use serde_json::{json, Value};
 
 const BID: &str = "7f75381ba1613693212cff6490d850fb41d625961bb46c6213ed0ab0a9756992";
 const NUL: &str = "efcd48f40a04d764b408f89a74f9a216bd849ffef7fff75196e65985067d2410";
 const NOTE_ID: &str = "1e8021be6a7711ff5b7738e14161c41789004733141b3e66bcfaaf59255b4f2e";
 const SLOT: u64 = 13112243;
-/// Offset of zksig in a 234-byte payload.
-const SIG_OFF: usize = 106;
 
 fn dir() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/real")
@@ -28,6 +27,10 @@ fn s(v: &Value) -> String {
     v.as_str().unwrap().to_string()
 }
 
+fn arr(v: &Value) -> [u8; 32] {
+    hex::decode(s(v)).unwrap().try_into().unwrap()
+}
+
 fn op64(n: &FakeNode) -> Value {
     n.blocks[BID]["transactions"][0]["mantle_tx"]["ops"][0].clone()
 }
@@ -36,21 +39,11 @@ fn event(n: &FakeNode) -> Value {
     n.events[BID][0]["Tx"].clone()
 }
 
-fn payload_hex() -> String {
-    s(&meta()["payload_hex"])
-}
-
-fn payload_bytes() -> Vec<u8> {
-    hex::decode(payload_hex()).unwrap()
-}
-
-fn req(payload_hex: &str, idc: &str, rate: u64, cfg: Value) -> VerifyRequest {
-    VerifyRequest {
-        auth_type: "pow-claim".into(),
-        payload_hex: payload_hex.into(),
-        id_commitment_hex: idc.into(),
-        rate,
-        config: Some(cfg),
+fn claim() -> Claim {
+    let m = meta();
+    Claim {
+        k: arr(&m["k"]),
+        evidence: Evidence { claim_block_id: arr(&m["claim_block_id"]), pow_nullifier: arr(&m["pow_nullifier"]), spend: None },
     }
 }
 
@@ -58,25 +51,19 @@ fn base_cfg() -> Value {
     json!({"node_url": "http://fake", "audience": "poc"})
 }
 
-fn run_full(n: &FakeNode, payload: &str, idc: &str, rate: u64, cfg: Value) -> Result<Verdict, String> {
-    let r = req(payload, idc, rate, cfg.clone());
+fn run_cfg(n: &FakeNode, cfg: Value) -> Result<Result<(), String>, String> {
     let c = Config::parse(Some(&cfg)).unwrap();
-    verify_with(&[n], &r, &c, default_vk().unwrap())
+    check_claim(&[n], &claim(), &c).map(|c| c.outcome.map(|_| ()))
 }
 
-fn run(n: &FakeNode) -> Result<Verdict, String> {
-    run_full(n, &payload_hex(), &s(&meta()["id_commitment_hex"]), 100, base_cfg())
-}
-
-fn run_payload(bytes: &[u8]) -> Verdict {
-    run_full(&node(), &hex::encode(bytes), &s(&meta()["id_commitment_hex"]), 100, base_cfg()).unwrap()
+fn run(n: &FakeNode) -> Result<Result<(), String>, String> {
+    run_cfg(n, base_cfg())
 }
 
 #[track_caller]
-fn assert_reject(v: Result<Verdict, String>, needle: &str) {
+fn assert_reject(v: Result<Result<(), String>, String>, needle: &str) {
     let v = v.unwrap_or_else(|e| panic!("expected reject containing {needle:?}, got Err {e}"));
-    assert!(!v.ok, "expected reject containing {needle:?}, got accept");
-    let r = v.reason.unwrap_or_default();
+    let r = v.expect_err(&format!("expected reject containing {needle:?}, got accept"));
     assert!(r.to_lowercase().contains(needle), "reason {r:?} lacks {needle:?}");
 }
 
@@ -127,7 +114,7 @@ fn known_answer_op_id() {
 // ---- accept ----
 
 #[test]
-fn real_accepts_via_spent_to() {
+fn real_accepts_via_spent_to_and_records_the_decision() {
     let dir = std::env::temp_dir().join(format!("pca-audit-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let log = dir.join("audit.jsonl");
@@ -135,9 +122,9 @@ fn real_accepts_via_spent_to() {
     let mut cfg = base_cfg();
     cfg["audit_log"] = json!(log.to_str().unwrap());
     let n = node();
-    let v = run_full(&n, &payload_hex(), &s(&meta()["id_commitment_hex"]), 100, cfg).unwrap();
-    assert!(v.ok, "{:?}", v.reason);
-    assert_eq!(v.nullifier.as_deref(), Some(NUL));
+    let c = check(&[&n], &claim(), &Config::parse(Some(&cfg)).unwrap()).unwrap();
+    assert_eq!(c.outcome, Ok(pow_claim::Path::SpentTo));
+    assert_eq!(c.lib_slot, Some(13112244));
     assert!(n.ranges.borrow().contains(&(SLOT, SLOT)));
     let line: Value =
         serde_json::from_str(std::fs::read_to_string(&log).unwrap().lines().last().unwrap()).unwrap();
@@ -149,106 +136,10 @@ fn real_accepts_via_spent_to() {
 }
 
 #[test]
-fn real_accepts_lower_rate_and_exact_min_payout() {
-    let n = node();
-    let idc = s(&meta()["id_commitment_hex"]);
-    assert!(run_full(&n, &payload_hex(), &idc, 50, base_cfg()).unwrap().ok);
+fn real_accepts_exact_min_payout() {
     let mut cfg = base_cfg();
     cfg["min_payout"] = json!(999108);
-    assert!(run_full(&n, &payload_hex(), &idc, 100, cfg).unwrap().ok);
-    assert!(run_full(&n, &format!("0x{}", payload_hex()), &idc, 100, base_cfg()).unwrap().ok);
-}
-
-// ---- rejects: payload / signature ----
-
-#[test]
-fn reject_sig_flip_pi_a() {
-    let mut b = payload_bytes();
-    b[SIG_OFF + 5] ^= 1;
-    let v = run_payload(&b);
-    assert!(!v.ok);
-    assert!(v.reason.unwrap().contains("signature"));
-}
-
-#[test]
-fn reject_sig_flip_pi_b() {
-    let mut b = payload_bytes();
-    b[SIG_OFF + 32 + 5] ^= 1;
-    let v = run_payload(&b);
-    assert!(!v.ok);
-    assert!(v.reason.unwrap().contains("signature"));
-}
-
-#[test]
-fn reject_sig_flip_pi_c() {
-    let mut b = payload_bytes();
-    b[SIG_OFF + 96 + 5] ^= 1;
-    assert!(!run_payload(&b).ok);
-}
-
-#[test]
-fn reject_other_idc() {
-    let v = run_full(&node(), &payload_hex(), &"11".repeat(32), 100, base_cfg());
-    assert_reject(v, "signature");
-}
-
-#[test]
-fn reject_bad_idc() {
-    assert_reject(run_full(&node(), &payload_hex(), "abcd", 100, base_cfg()), "id_commitment");
-}
-
-#[test]
-fn reject_audience_evil() {
-    let mut cfg = base_cfg();
-    cfg["audience"] = json!("evil");
-    let v = run_full(&node(), &payload_hex(), &s(&meta()["id_commitment_hex"]), 100, cfg);
-    assert_reject(v, "signature");
-}
-
-#[test]
-fn reject_rate_above_rate_max() {
-    let v = run_full(&node(), &payload_hex(), &s(&meta()["id_commitment_hex"]), 101, base_cfg());
-    assert_reject(v, "rate_max");
-}
-
-#[test]
-fn reject_length_plus_minus_one() {
-    let b = payload_bytes();
-    assert!(run_payload(&b[..b.len() - 1]).reason.unwrap().contains("length"));
-    let mut l = b.clone();
-    l.push(0);
-    assert!(run_payload(&l).reason.unwrap().contains("length"));
-}
-
-#[test]
-fn reject_bad_hex() {
-    assert_reject(run_full(&node(), "zz", &"11".repeat(32), 100, base_cfg()), "hex");
-}
-
-#[test]
-fn reject_version_2() {
-    let mut b = payload_bytes();
-    b[0] = 2;
-    assert!(run_payload(&b).reason.unwrap().contains("version"));
-}
-
-#[test]
-fn reject_unknown_flag() {
-    let mut b = payload_bytes();
-    b[1] = 2;
-    assert!(run_payload(&b).reason.unwrap().contains("flags"));
-}
-
-#[test]
-fn reject_spend_locator() {
-    let mut p = Payload::decode(&payload_bytes()).unwrap();
-    p.spend = Some(([1; 32], [2; 32]));
-    let v = run_payload(&p.encode());
-    assert_eq!(v.reason.as_deref(), Some("spend locator unsupported in this PoC"));
-    let mut cfg = base_cfg();
-    cfg["allow_spend_locator"] = json!(false);
-    let v = run_full(&node(), &hex::encode(p.encode()), &s(&meta()["id_commitment_hex"]), 100, cfg);
-    assert_reject(v, "spend locator");
+    assert_eq!(run_cfg(&node(), cfg), Ok(Ok(())));
 }
 
 // ---- rejects: chain ----
@@ -331,44 +222,30 @@ fn reject_transfer_input_changed_front_run() {
 fn reject_min_payout_above_output() {
     let mut cfg = base_cfg();
     cfg["min_payout"] = json!(999109);
-    let v = run_full(&node(), &payload_hex(), &s(&meta()["id_commitment_hex"]), 100, cfg);
-    assert_reject(v, "does not own");
+    assert_reject(run_cfg(&node(), cfg), "does not own");
+}
+
+#[test]
+fn reject_other_key() {
+    let mut c = claim();
+    c.k = [0x11; 32];
+    let cfg = Config::parse(Some(&base_cfg())).unwrap();
+    let r = check_claim(&[&node()], &c, &cfg).unwrap();
+    assert!(r.outcome.unwrap_err().contains("does not own"));
 }
 
 // ---- operator errors ----
 
 #[test]
 fn err_no_node_url() {
-    let r = req(&payload_hex(), &s(&meta()["id_commitment_hex"]), 100, json!({"audience": "poc"}));
-    assert!(verify_request(&r).unwrap_err().contains("node_url"));
-    let mut r = r;
-    r.config = None;
-    assert!(verify_request(&r).unwrap_err().contains("node_url"));
-}
-
-#[test]
-fn err_bad_vk_path() {
-    let mut cfg = base_cfg();
-    cfg["zksign_vk_path"] = json!("/nonexistent/vk.json");
-    let r = req(&payload_hex(), &s(&meta()["id_commitment_hex"]), 100, cfg);
-    assert!(verify_request(&r).unwrap_err().contains("zksign_vk_path"));
-}
-
-#[test]
-fn vk_path_override_works() {
-    let mut cfg = json!({"node_url": "http://127.0.0.1:1", "audience": "poc", "http_timeout_ms": 500});
-    cfg["zksign_vk_path"] =
-        json!(concat!(env!("CARGO_MANIFEST_DIR"), "/../zksign-light/assets/zksign_vk_v0.5.7.json"));
-    let r = req(&payload_hex(), &s(&meta()["id_commitment_hex"]), 100, cfg);
-    // Signature passes with the file VK, then the unreachable node is an Err.
-    assert!(verify_request(&r).unwrap_err().contains("unreachable"));
+    assert!(Config::parse(Some(&json!({"audience": "poc"}))).unwrap_err().contains("node_url"));
+    assert!(Config::parse(None).unwrap_err().contains("node_url"));
 }
 
 #[test]
 fn err_audience_256() {
     let cfg = json!({"node_url": "http://x:1", "audience": "a".repeat(256)});
-    let r = req(&payload_hex(), &s(&meta()["id_commitment_hex"]), 100, cfg);
-    assert!(verify_request(&r).unwrap_err().contains("255"));
+    assert!(Config::parse(Some(&cfg)).unwrap_err().contains("255"));
 }
 
 #[test]
@@ -379,13 +256,16 @@ fn err_info_without_lib_slot() {
 }
 
 #[test]
-fn http_unreachable_is_err_after_sig_and_tampered_is_reject() {
+fn err_no_node_configured() {
+    let cfg = Config::parse(Some(&base_cfg())).unwrap();
+    assert!(check_claim(&[], &claim(), &cfg).unwrap_err().contains("no node"));
+}
+
+#[test]
+fn http_unreachable_is_err() {
     let cfg = json!({"node_url": "http://127.0.0.1:1", "audience": "poc", "http_timeout_ms": 500});
-    let idc = s(&meta()["id_commitment_hex"]);
-    let e = verify_request(&req(&payload_hex(), &idc, 100, cfg.clone())).unwrap_err();
+    let c = Config::parse(Some(&cfg)).unwrap();
+    let node = pow_claim::HttpNode::new(&c.node_url, c.http_timeout_ms);
+    let e = check(&[&node], &claim(), &c).unwrap_err();
     assert!(e.contains("unreachable"), "{e}");
-    let mut b = payload_bytes();
-    b[SIG_OFF + 5] ^= 1;
-    let v = verify_request(&req(&hex::encode(b), &idc, 100, cfg)).unwrap();
-    assert!(!v.ok);
 }

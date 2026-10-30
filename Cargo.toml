@@ -1,4 +1,4 @@
 [workspace]
 resolver = "2"
-members = ["crates/keycard-attest", "crates/keycard-client", "crates/rln-auth-vector", "crates/zksign-light", "crates/pow-claim"]
+members = ["crates/keycard-attest", "crates/keycard-client", "crates/rln-auth-vector", "crates/zksign-light", "crates/pow-claim", "crates/rln-auth-vectors"]
 exclude = ["rust"]

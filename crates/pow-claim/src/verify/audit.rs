@@ -13,15 +13,11 @@ pub struct Record {
     pub lib_slot: Option<u64>,
 }
 
-pub fn record(
-    audit_log: Option<&str>,
-    rec: &Record,
-    result: &Result<rln_auth_vector::Verdict, String>,
-    ms: u128,
-) {
+/// `result`: `Ok(Ok(()))` accept, `Ok(Err(reason))` reject, `Err(e)` operator error.
+pub fn record(audit_log: Option<&str>, rec: &Record, result: &Result<Result<(), String>, String>, ms: u128) {
     let (verdict, reason) = match result {
-        Ok(v) if v.ok => ("accept", None),
-        Ok(v) => ("reject", v.reason.clone()),
+        Ok(Ok(())) => ("accept", None),
+        Ok(Err(r)) => ("reject", Some(r.clone())),
         Err(e) => ("error", Some(e.clone())),
     };
     let nul = rec.nullifier.as_deref().unwrap_or("-");

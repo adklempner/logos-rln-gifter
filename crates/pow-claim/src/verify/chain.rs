@@ -6,7 +6,7 @@
 use crate::{
     node::NodeApi,
     ownership::{bytes32, note_id_hex, tx_event, Path},
-    Payload,
+    claim::Claim,
 };
 use serde_json::Value;
 
@@ -48,7 +48,7 @@ pub fn spent_to_k(tx: &Value, note_id_hex: &str, k: &[u8; 32], min_payout: u64) 
 }
 
 /// Steps 3–8 for an already signature-checked payload.
-pub fn check_claim(nodes: &[&dyn NodeApi], p: &Payload, cfg: &Config) -> Result<ClaimCheck, String> {
+pub fn check_claim(nodes: &[&dyn NodeApi], p: &Claim, cfg: &Config) -> Result<ClaimCheck, String> {
     let node = match nodes {
         [] => return Err("no node configured".into()),
         [n] => *n,
@@ -61,15 +61,15 @@ pub fn check_claim(nodes: &[&dyn NodeApi], p: &Payload, cfg: &Config) -> Result<
 
 fn run(
     node: &dyn NodeApi,
-    p: &Payload,
+    p: &Claim,
     cfg: &Config,
     lib_out: &mut Option<u64>,
 ) -> Result<Result<Path, String>, String> {
     macro_rules! reject {
         ($($t:tt)*) => { return Ok(Err(format!($($t)*))) };
     }
-    let bid = hex::encode(p.claim_block_id);
-    let nul = p.pow_nullifier;
+    let bid = hex::encode(p.evidence.claim_block_id);
+    let nul = p.evidence.pow_nullifier;
 
     // 3. LIB.
     let info = node.info().map_err(node_err)?;

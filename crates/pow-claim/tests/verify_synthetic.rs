@@ -1,7 +1,7 @@
 //! Synthetic chain (no signature): path A (`utxo.note.pk == K`) at the
 //! `check_claim` layer, and `allow_direct_ownership = false`.
 
-use pow_claim::{node::testing::FakeNode, ownership::Path, Payload};
+use pow_claim::{node::testing::FakeNode, ownership::Path, Claim, Evidence};
 use pow_claim::verify::{check_claim, ticket::ClaimOp, Config};
 use serde_json::{json, Value};
 
@@ -16,7 +16,7 @@ fn k() -> [u8; 32] {
 }
 
 /// A self-consistent claim block where the reward note pays `K` directly.
-fn setup() -> (FakeNode, Payload) {
+fn setup() -> (FakeNode, Claim) {
     let op = ClaimOp { epoch_nonce: [5; 32], block_hash: [7; 32], public_key: k() };
     let ticket = op.puzzle_ticket();
     let op_id: Vec<u8> = op.op_id().to_vec();
@@ -36,16 +36,7 @@ fn setup() -> (FakeNode, Payload) {
     n.add_block(block, vec![ev], true);
     let mut bid = [0u8; 32];
     hex::decode_to_slice(BID, &mut bid).unwrap();
-    let p = Payload {
-        version: 1,
-        flags: 0,
-        k: k(),
-        claim_block_id: bid,
-        pow_nullifier: ticket,
-        rate_max: 100,
-        spend: None,
-        zksig: [0; 128],
-    };
+    let p = Claim { k: k(), evidence: Evidence { claim_block_id: bid, pow_nullifier: ticket, spend: None } };
     (n, p)
 }
 

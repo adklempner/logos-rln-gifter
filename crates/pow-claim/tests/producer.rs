@@ -1,9 +1,7 @@
-//! Discovery + produce tests over `FakeNode` (synthetic fixtures and
+//! Discovery + gather tests over `FakeNode` (synthetic fixtures and
 //! in-memory scenarios).
 
-use pow_claim::{
-    challenge, discover, node::testing::FakeNode, produce, Path, Payload, ProduceArgs,
-};
+use pow_claim::{discover, gather, node::testing::FakeNode, Evidence, Path, ProduceArgs};
 use serde_json::{json, Value};
 
 const K: &str = "e3635f207984ae779cf76b5f20714b514373f61ff96260879fe0a6d71f2dce07";
@@ -60,58 +58,31 @@ fn direct_block(id: u8, slot: u64, nul: u8, pk: &str) -> (Value, Vec<Value>) {
 }
 
 #[test]
-fn fixtures_full_produce() {
+fn fixtures_full_gather() {
     let n = FakeNode::from_dir(fixture_dir()).unwrap();
-    let mut args = ProduceArgs::parse(Some(&json!({"audience": "poc"}))).unwrap();
-    args.rate_max = 100;
-    let idc = h(0x01);
-    let p = produce(&n, &idc, &args).unwrap();
-    assert_eq!(p.payload.len(), 234);
-    assert_eq!(p.k_hex, K);
-    assert_eq!(p.claim_block_id, h(0xa1));
-    assert_eq!(p.pow_nullifier, h(0x11));
-    let want = challenge::digest("poc", &[1; 32], 100, &[0x11; 32]);
-    assert_eq!(p.digest, want);
-
-    let sign = n.last_sign().unwrap();
-    assert_eq!(sign.tx_hash, hex::encode(want));
-    assert_eq!(sign.pk, K);
-
-    let d = Payload::decode(&p.payload).unwrap();
-    assert_eq!(d.version, 1);
-    assert_eq!(d.flags, 0);
-    assert_eq!(hex::encode(d.k), K);
-    assert_eq!(d.claim_block_id, [0xa1; 32]);
-    assert_eq!(d.pow_nullifier, [0x11; 32]);
-    assert_eq!(d.rate_max, 100);
-    assert_eq!(d.spend, None);
-    assert_eq!(&d.zksig[..32], &[0xaa; 32]);
-    assert_eq!(&d.zksig[32..96], &[0xbb; 64]);
-    assert_eq!(&d.zksig[96..], &[0xcc; 32]);
+    let args = ProduceArgs::parse(Some(&json!({"audience": "poc"}))).unwrap();
+    let c = gather(&n, &args).unwrap();
+    assert_eq!(hex::encode(c.k), K);
+    assert_eq!(c.evidence.claim_block_id, [0xa1; 32]);
+    assert_eq!(c.evidence.pow_nullifier, [0x11; 32]);
+    assert_eq!(c.evidence.spend, None);
+    assert!(n.last_sign().is_none(), "gathering signs nothing; the logos scheme does");
+    let e = c.evidence.encode();
+    assert_eq!(e.len(), 65);
+    let (back, rest) = Evidence::decode(&e).unwrap();
+    assert_eq!((back, rest), (c.evidence, &b""[..]));
 }
 
 #[test]
-fn produce_with_spend_locator_and_bad_idc() {
+fn gather_with_spend_locator() {
     let n = FakeNode::from_dir(fixture_dir()).unwrap();
     let args = ProduceArgs::parse(Some(&json!({"spend_block_id": h(0x55), "spend_tx_hash": h(0x66)}))).unwrap();
-    let p = produce(&n, &h(1), &args).unwrap();
-    assert_eq!(p.payload.len(), 298);
-    let d = Payload::decode(&p.payload).unwrap();
-    assert_eq!(d.flags, 1);
-    assert_eq!(d.spend, Some(([0x55; 32], [0x66; 32])));
+    let c = gather(&n, &args).unwrap();
+    assert_eq!(c.evidence.encode().len(), 129);
+    assert_eq!(c.evidence.spend, Some(([0x55; 32], [0x66; 32])));
 
     let half = ProduceArgs::parse(Some(&json!({"spend_block_id": h(0x55)}))).unwrap();
-    assert!(produce(&n, &h(1), &half).unwrap_err().contains("together"));
-    let e = produce(&n, "1234", &ProduceArgs::default()).unwrap_err();
-    assert!(e.starts_with("id_commitment_hex"), "{e}");
-}
-
-#[test]
-fn produce_propagates_bad_sign_reply() {
-    let mut n = FakeNode::from_dir(fixture_dir()).unwrap();
-    n.sign_reply = json!({"sig": {"pi_a": "aa", "pi_b": "bb", "pi_c": "cc"}});
-    let e = produce(&n, &h(1), &ProduceArgs::default()).unwrap_err();
-    assert!(e.contains("pi_a"), "{e}");
+    assert!(gather(&n, &half).unwrap_err().contains("together"));
 }
 
 #[test]
@@ -276,7 +247,7 @@ fn transfer_in_other_tx_does_not_count() {
 }
 
 #[test]
-fn produce_http_rejects_bad_args_without_network() {
-    let e = pow_claim::produce_http(&h(1), Some(&json!("{\"rate_max\": \"x\"}"))).unwrap_err();
+fn bad_args_are_refused_without_network() {
+    let e = ProduceArgs::parse(Some(&json!("{\"rate_max\": \"x\"}"))).unwrap_err();
     assert!(e.starts_with("rate_max"), "{e}");
 }

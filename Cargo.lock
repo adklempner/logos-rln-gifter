@@ -284,6 +284,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "240e56f4d3c453c36faacb695c535a4d5f8c7d23dac175014f32eb0a71012a03"
 
 [[package]]
+name = "base58"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6107fe1be6682a68940da878d9e9f5e90ca5745b3dec9fd1bb393c8777d4f581"
+
+[[package]]
 name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -977,7 +983,7 @@ dependencies = [
 
 [[package]]
 name = "keycard_attest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "k256",
@@ -1424,6 +1430,24 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "rln_auth_vectors"
+version = "0.1.0"
+dependencies = [
+ "base58",
+ "hex",
+ "k256",
+ "keycard_attest",
+ "keycard_client",
+ "pow-claim",
+ "rand_core 0.6.4",
+ "rln_auth_vector",
+ "serde_json",
+ "sha2",
+ "tiny-keccak",
+ "zksign_light",
 ]
 
 [[package]]

@@ -25,6 +25,7 @@ macro_rules! reject_on {
 pub fn verify_flow(r: &VerifyRegistry, req: &VerifyRequest) -> Result<Verdict, String> {
     let t = AuthType::parse(&req.auth_type)?;
     let (scheme, auth) = r.resolve(&t)?;
+    let scfg = scheme.config(req.config.as_ref())?;
     let cfg = auth.config(scheme, req.config.as_ref())?;
 
     let bytes = match hex::decode(strip_0x(&req.payload_hex)) {
@@ -51,7 +52,7 @@ pub fn verify_flow(r: &VerifyRegistry, req: &VerifyRequest) -> Result<Verdict, S
     };
 
     let digest = binding_digest(&t, &b, &auth.extra(ev.as_ref()));
-    let proven = reject_on!(scheme.verify(&b, &digest, &d)?);
+    let proven = reject_on!(scheme.verify(scfg.as_ref(), &b, &digest, &d)?);
     if let Some(claimed) = &d.claimed {
         let (c, p) = (claimed.canonical(), proven.canonical());
         if c != p {
@@ -71,7 +72,7 @@ pub fn produce_flow(r: &ProduceRegistry, req: &ProduceRequest) -> Result<Produce
     let b = Binding::from_produce(req)?;
     let evidence = claimant.gather(&b, req.args.as_ref())?;
     let digest = binding_digest(&t, &b, &claimant.extra(&evidence));
-    let part = signer.sign(&b, &digest)?;
+    let part = signer.sign(&b, &digest, req.args.as_ref())?;
     Ok(ProduceReply { payload_hex: hex::encode(frame(&part, &evidence, b.rate_max)) })
 }
 
@@ -112,7 +113,7 @@ mod tests {
             let (part, rest) = body.split_at(33);
             Outcome::Ok(Decoded { claimed: Some(Box::new(ToyId(hex::encode(&part[..32])))), part, rest })
         }
-        fn verify(&self, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>) -> Check<Box<dyn Identity>> {
+        fn verify(&self, _cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>) -> Check<Box<dyn Identity>> {
             if d.part[32] != digest[0] {
                 return Ok(Outcome::Reject(reason::SIG_FAILED.into()));
             }
@@ -125,12 +126,12 @@ mod tests {
         fn scheme(&self) -> &'static str {
             self.0
         }
-        fn sign(&self, _b: &Binding, digest: &[u8; 32]) -> Result<Vec<u8>, String> {
+        fn sign(&self, _b: &Binding, digest: &[u8; 32], _args: Option<&Value>) -> Result<Vec<u8>, String> {
             let mut v = self.1.to_vec();
             v.push(digest[0]);
             Ok(v)
         }
-        fn identity(&self) -> Result<Box<dyn Identity>, String> {
+        fn identity(&self, _args: Option<&Value>) -> Result<Box<dyn Identity>, String> {
             Ok(Box::new(ToyId(hex::encode(self.1))))
         }
     }

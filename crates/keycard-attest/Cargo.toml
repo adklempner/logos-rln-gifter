@@ -1,8 +1,9 @@
 [package]
 name = "keycard_attest"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Keycard IDENTIFY_CARD attestation verification (vendored from keycard_rln::attest)"
+description = "Keycard IDENTIFY_CARD attestation parsing and verification: the card's challenge signature (the keycard scheme) and the CA chain (the attestation authoriser)"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 k256 = { version = "0.13", features = ["ecdsa"] }

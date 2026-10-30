@@ -1,4 +1,8 @@
-// Verify a Keycard IDENTIFY_CARD attestation and bind it to an RLN commitment
+// Parse a Keycard IDENTIFY_CARD attestation and verify its two halves: the
+// card's signature over the challenge (what the keycard scheme proves) and the
+// CA signature over the card's identity key (what the attestation authoriser
+// trusts). The challenge is whatever the caller bound — for the RLN gifter it
+// is the composed binding digest.
 // FEATURE: Keycard-rooted RLN identities
 
 use crate::error::Error;
@@ -12,10 +16,6 @@ const TAG_CERTIFICATE: u8 = 0x8A;
 const TAG_DER_SEQUENCE: u8 = 0x30;
 const CERTIFICATE_LEN: usize = 98;
 
-/// Domain-separates the challenge the card signs so a genuine attestation is
-/// bound to one RLN `id_commitment` and can't be replayed for another.
-pub const ATTEST_DOMAIN: &[u8] = b"logos/rln/keycard-attest/1";
-
 /// The Status production IdentApplet CA public key (compressed secp256k1),
 /// confirmed byte-for-byte from a genuine retail Keycard v3.1 on 2026-07-09
 /// (IDENTIFY_CARD recovered exactly this key). An attestation that recovers this
@@ -28,21 +28,11 @@ pub const STATUS_PRODUCTION_CA: [u8; 33] = [
 
 /// A parsed IDENTIFY_CARD response: the card's identity pubkey, the CA
 /// signature over it (proving the card is genuine), and the card's signature
-/// over the challenge (proving liveness + binding to `id_commitment`).
+/// over the challenge (proving liveness + binding to the challenge).
 pub struct Attestation {
     pub ident_pub: [u8; 33],
     pub ca_sig: [u8; 65],
     pub challenge_sig: Signature,
-}
-
-/// The 32-byte challenge a client must have the card sign: `SHA256(domain ||
-/// id_commitment)`. Recomputed by the verifier from the requested commitment,
-/// so the attestation only counts for the commitment it was produced for.
-pub fn bound_challenge(id_commitment: &[u8]) -> [u8; 32] {
-    let mut h = Sha256::new();
-    h.update(ATTEST_DOMAIN);
-    h.update(id_commitment);
-    h.finalize().into()
 }
 
 /// The once-per-card nullifier: `keccak256(ident_pub)`. Derived from the card's
@@ -88,6 +78,20 @@ fn find_tag(buf: &[u8], tag: u8) -> Result<(&[u8], &[u8]), Error> {
     Err(Error::InvalidInput(format!("tlv tag {tag:#04x} not found")))
 }
 
+/// The byte length of the attestation TLV at the front of `buf` (the outer
+/// `A0` template), so a caller can split it off a longer payload.
+pub fn tlv_len(buf: &[u8]) -> Result<usize, Error> {
+    if buf.first() != Some(&TAG_SIGNATURE_TEMPLATE) {
+        return Err(Error::InvalidInput("attestation must start with the A0 template".into()));
+    }
+    let (vlen, lhdr) = read_len(buf, 1)?;
+    let end = 1 + lhdr + vlen;
+    if end > buf.len() {
+        return Err(Error::InvalidInput("tlv value out of range".into()));
+    }
+    Ok(end)
+}
+
 /// Parse the IDENTIFY_CARD TLV `A0 { 8A <98-byte cert>, <DER challenge sig> }`,
 /// where the 98-byte cert is `ident_pub(33) || ca_sig(65)`.
 pub fn parse_attestation(tlv: &[u8]) -> Result<Attestation, Error> {
@@ -106,34 +110,43 @@ pub fn parse_attestation(tlv: &[u8]) -> Result<Attestation, Error> {
     Ok(Attestation { ident_pub, ca_sig, challenge_sig })
 }
 
-/// Verify a genuine-card attestation bound to `expected_challenge`, returning
-/// the once-per-card nullifier. Fails unless (1) the cert signature recovers a
-/// CA in `trusted_cas` and (2) the card's challenge signature verifies against
-/// `ident_pub` over `expected_challenge` — the binding keycard-go never checks.
-pub fn verify_attestation(
-    att: &Attestation,
-    trusted_cas: &[[u8; 33]],
-    expected_challenge: &[u8; 32],
-) -> Result<[u8; 32], Error> {
-    let msg = Sha256::digest(att.ident_pub);
-    let recid = RecoveryId::from_byte(att.ca_sig[64])
+/// The CA that signed `ident_pub` (compressed), recovered from `ca_sig`.
+pub fn recover_ca(ident_pub: &[u8; 33], ca_sig: &[u8; 65]) -> Result<[u8; 33], Error> {
+    let msg = Sha256::digest(ident_pub);
+    let recid = RecoveryId::from_byte(ca_sig[64])
         .ok_or_else(|| Error::InvalidInput("bad CA recovery id".into()))?;
-    let ca_sig = Signature::from_slice(&att.ca_sig[0..64])
+    let sig = Signature::from_slice(&ca_sig[0..64])
         .map_err(|e| Error::InvalidInput(format!("CA sig: {e}")))?;
-    let ca = VerifyingKey::recover_from_prehash(msg.as_slice(), &ca_sig, recid)
+    let ca = VerifyingKey::recover_from_prehash(&msg, &sig, recid)
         .map_err(|e| Error::InvalidInput(format!("CA recover: {e}")))?;
-    let ca_point = ca.to_encoded_point(true);
-    if !trusted_cas.iter().any(|t| t.as_slice() == ca_point.as_bytes()) {
-        return Err(Error::Backend("attestation CA is not trusted".into()));
-    }
+    let mut out = [0u8; 33];
+    out.copy_from_slice(ca.to_encoded_point(true).as_bytes());
+    Ok(out)
+}
+
+/// The card's signature over the raw 32-byte `challenge`, by `ident_pub`.
+pub fn verify_challenge(att: &Attestation, challenge: &[u8; 32]) -> Result<(), Error> {
     let ident = VerifyingKey::from_sec1_bytes(&att.ident_pub)
         .map_err(|e| Error::InvalidInput(format!("ident pub: {e}")))?;
     // The card's JavaCard ECDSA emits high-S signatures; k256's verifier rejects
     // non-canonical S, so normalize to low-S before verifying the raw challenge.
     let sig = att.challenge_sig.normalize_s().unwrap_or(att.challenge_sig);
-    ident
-        .verify_prehash(expected_challenge, &sig)
-        .map_err(|_| Error::InvalidSignature)?;
+    ident.verify_prehash(challenge, &sig).map_err(|_| Error::InvalidSignature)
+}
+
+/// Both halves: the cert signature recovers a CA in `trusted_cas` and the
+/// card's challenge signature verifies over `expected_challenge` — the
+/// binding keycard-go never checks. Returns the once-per-card nullifier.
+pub fn verify_attestation(
+    att: &Attestation,
+    trusted_cas: &[[u8; 33]],
+    expected_challenge: &[u8; 32],
+) -> Result<[u8; 32], Error> {
+    let ca = recover_ca(&att.ident_pub, &att.ca_sig)?;
+    if !trusted_cas.contains(&ca) {
+        return Err(Error::Backend("attestation CA is not trusted".into()));
+    }
+    verify_challenge(att, expected_challenge)?;
     Ok(nullifier(&att.ident_pub))
 }
 
@@ -169,6 +182,8 @@ mod tests {
         let null =
             verify_attestation(&att, &[arr33(TEST_CA)], &arr32(GOLDEN_CHALLENGE)).unwrap();
         assert_eq!(null, nullifier(&att.ident_pub));
+        assert_eq!(recover_ca(&att.ident_pub, &att.ca_sig).unwrap(), arr33(TEST_CA));
+        verify_challenge(&att, &arr32(GOLDEN_CHALLENGE)).unwrap();
     }
 
     #[test]
@@ -187,15 +202,18 @@ mod tests {
         bad[0] ^= 0x01;
         let err = verify_attestation(&att, &[arr33(TEST_CA)], &bad).unwrap_err();
         assert_eq!(err, Error::InvalidSignature);
-        // A bound challenge for some commitment likewise won't match this vector.
-        let other = bound_challenge(&[0x11; 32]);
-        assert!(verify_attestation(&att, &[arr33(TEST_CA)], &other).is_err());
+        assert_eq!(verify_challenge(&att, &[0x11; 32]).unwrap_err(), Error::InvalidSignature);
     }
 
     #[test]
-    fn bound_challenge_is_deterministic_and_commitment_specific() {
-        let idc = [0xABu8; 32];
-        assert_eq!(bound_challenge(&idc), bound_challenge(&idc));
-        assert_ne!(bound_challenge(&idc), bound_challenge(&[0xACu8; 32]));
+    fn tlv_len_splits_the_attestation_off_a_longer_payload() {
+        let tlv = hex::decode(GOLDEN_TLV).unwrap();
+        assert_eq!(tlv_len(&tlv).unwrap(), tlv.len());
+        let mut framed = tlv.clone();
+        framed.extend_from_slice(&[7u8; 8]);
+        assert_eq!(tlv_len(&framed).unwrap(), tlv.len());
+        assert!(tlv_len(&tlv[..tlv.len() - 1]).is_err(), "truncated");
+        assert!(tlv_len(&[0x30, 0x01, 0x00]).is_err(), "not an A0 template");
+        assert!(tlv_len(&[]).is_err());
     }
 }

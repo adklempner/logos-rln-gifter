@@ -1,7 +1,9 @@
 //! Tests over the recorded real-node fixtures (`tests/fixtures/real/`,
 //! captured from a node 0.3.0-rc.5 run by `tools/pow-claim-poc/run.sh`).
+//! `meta.json` also carries the v1 payload and its node signature; those are
+//! not exercised here (the digest moved to the composed binding).
 
-use pow_claim::{challenge, node::testing::FakeNode, produce, ProduceArgs};
+use pow_claim::{gather, node::testing::FakeNode, ProduceArgs};
 use serde_json::{json, Value};
 
 fn dir() -> std::path::PathBuf {
@@ -25,35 +27,22 @@ fn args(extra: Value) -> ProduceArgs {
     ProduceArgs::parse(Some(&a)).unwrap()
 }
 
-fn idc() -> String {
-    s(&meta()["id_commitment_hex"])
-}
-
 #[test]
-fn real_produce_reproduces_recorded_payload() {
+fn real_gather_finds_the_recorded_claim() {
     let m = meta();
     let n = FakeNode::from_dir(dir()).unwrap();
-    let p = produce(&n, &idc(), &args(json!({}))).unwrap();
-
-    assert_eq!(hex::encode(&p.payload), s(&m["payload_hex"]));
-    assert_eq!(p.k_hex, s(&m["k"]));
-    assert_eq!(p.claim_block_id, s(&m["claim_block_id"]));
-    assert_eq!(p.pow_nullifier, s(&m["pow_nullifier"]));
-
-    let idc_bytes: [u8; 32] = hex::decode(idc()).unwrap().try_into().unwrap();
-    let nul: [u8; 32] = hex::decode(s(&m["pow_nullifier"])).unwrap().try_into().unwrap();
-    let want = challenge::digest(&s(&m["audience"]), &idc_bytes, m["rate_max"].as_u64().unwrap(), &nul);
-    assert_eq!(p.digest, want);
-    let sign = n.last_sign().unwrap();
-    assert_eq!(sign.tx_hash, hex::encode(want));
-    assert_eq!(sign.pk, s(&m["k"]));
+    let c = gather(&n, &args(json!({}))).unwrap();
+    assert_eq!(hex::encode(c.k), s(&m["k"]));
+    assert_eq!(hex::encode(c.evidence.claim_block_id), s(&m["claim_block_id"]));
+    assert_eq!(hex::encode(c.evidence.pow_nullifier), s(&m["pow_nullifier"]));
+    assert_eq!(c.evidence.spend, None);
+    assert!(n.last_sign().is_none());
 }
 
 #[cfg(feature = "strict-ownership")]
 #[test]
 fn real_ownership_is_path_b_via_note_id() {
     use pow_claim::ownership::{note_id_hex, owner, Path};
-    use pow_claim::Payload;
 
     let m = meta();
     let k = s(&m["k"]);
@@ -85,10 +74,6 @@ fn real_ownership_is_path_b_via_note_id() {
     assert_eq!(got, k);
     assert_eq!(path, Path::SpentTo);
     assert_ne!(path, Path::Direct);
-
-    // Payload decodes to the same K.
-    let d = Payload::decode(&hex::decode(s(&m["payload_hex"])).unwrap()).unwrap();
-    assert_eq!(hex::encode(d.k), k);
 }
 
 #[test]
@@ -96,7 +81,7 @@ fn real_discovery_uses_immutable_range() {
     let m = meta();
     let slot = m["slot"].as_u64().unwrap();
     let n = FakeNode::from_dir(dir()).unwrap();
-    produce(&n, &idc(), &args(json!({}))).unwrap();
+    gather(&n, &args(json!({}))).unwrap();
     let ranges = n.ranges.borrow();
     assert!(!ranges.is_empty());
     assert!(ranges.iter().any(|&(a, b)| a <= slot && slot <= b), "{ranges:?}");
@@ -106,12 +91,11 @@ fn real_discovery_uses_immutable_range() {
 fn real_pinned_mode_matches() {
     let m = meta();
     let n = FakeNode::from_dir(dir()).unwrap();
-    let p = produce(&n, &idc(), &args(json!({
+    let c = gather(&n, &args(json!({
         "claim_block_id": m["claim_block_id"], "pow_nullifier": m["pow_nullifier"],
     }))).unwrap();
-    assert_eq!(p.claim_block_id, s(&m["claim_block_id"]));
-    assert_eq!(p.pow_nullifier, s(&m["pow_nullifier"]));
-    assert_eq!(hex::encode(&p.payload), s(&m["payload_hex"]));
+    assert_eq!(hex::encode(c.evidence.claim_block_id), s(&m["claim_block_id"]));
+    assert_eq!(hex::encode(c.evidence.pow_nullifier), s(&m["pow_nullifier"]));
     assert!(n.ranges.borrow().is_empty(), "pinned mode must not scan");
 }
 
@@ -119,7 +103,7 @@ fn real_pinned_mode_matches() {
 fn real_excluded_nullifier_yields_not_found() {
     let m = meta();
     let n = FakeNode::from_dir(dir()).unwrap();
-    let e = produce(&n, &idc(), &args(json!({
+    let e = gather(&n, &args(json!({
         "exclude_nullifiers": [m["pow_nullifier"]], "allow_unfinal": false,
     }))).unwrap_err();
     assert!(e.contains("no redeemable"), "{e}");
