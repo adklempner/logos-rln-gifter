@@ -66,6 +66,6 @@ dispatch routes by `auth_type` over the slice you pass.
 - The host application declares its chosen vector modules in its
   `metadata.json` dependencies so they get installed and loaded.
 
-Reference vectors in this repo: `rust/keycard-auth-module` (verifier),
-`rust/keycard-capture-module` (producer), `rust/allowlist-auth-module` (verifier,
-eth-, logos- and lez-allowlist), `rust/allowlist-sign-module` (their producer).
+Reference vectors in this repo: `rust/rln-auth-module` (verifier),
+`rust/keycard-capture-module` (producer), `rust/rln-auth-module` (verifier,
+eth-, logos- and lez-allowlist), `rust/rln-sign-module` (their producer).

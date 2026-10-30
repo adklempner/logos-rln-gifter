@@ -164,7 +164,7 @@ except Exception: print("?")')"
 # the signer, otherwise identity reads it, with the args for logos).
 cd_allowlist_identity() {
     local pk meth req res id
-    [ "$CD_PRODUCER" = allowlist_sign_module ] || return 0
+    [ "$CD_PRODUCER" = rln_sign_module ] || return 0
     pk=$(ARGS="$AUTH_ARGS" python3 -I -c 'import json, os
 try: print(json.loads(os.environ["ARGS"]).get("private_key", "") or "")
 except Exception: print("")')
@@ -185,10 +185,10 @@ except Exception: a = {}
 a = {k: v for k, v in a.items() if k != "private_key"} if isinstance(a, dict) else {}
 print(json.dumps({"auth_type": os.environ["AT"], "args": a}, separators=(",", ":")))')
     fi
-    res=$(al_call allowlist_sign_module "$meth" "$req" | al_res) || res=""
+    res=$(al_call rln_sign_module "$meth" "$req" | al_res) || res=""
     id=$(al_field "$res" id)
     if [ -z "$id" ]; then
-        al_say "WARNING: allowlist_sign_module.$meth ($AUTH_TYPE) reported no id: ${res:-<no reply>}"
+        al_say "WARNING: rln_sign_module.$meth ($AUTH_TYPE) reported no id: ${res:-<no reply>}"
         return 0
     fi
     # The module holds the key now: the delegated auth_args carry none.

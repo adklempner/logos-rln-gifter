@@ -10,12 +10,11 @@
 # nixos/nix container on the target host — native amd64 on an Intel Mac,
 # native arm64 on an Apple-silicon one — and asks for `#lgx-portable`.
 #
-# Modules (allocator side first, then the tester-side producers):
-#   rln-gifter-module  keycard-auth-module  pow-claim-auth-module
-#   allowlist-auth-module (eth-, logos-, lez-allowlist verifiers)
-#   allowlist-sign-module (their producers)  pow-claim-capture-module
+# Modules (allocator side first, then the tester-side producer):
+#   rln-gifter-module  rln-auth-module (every verifier composition)
+#   rln-sign-module (every producer composition but the PC/SC keycard)
 #
-# Usage: build-bundles.sh [module-dir…]       (default: all six)
+# Usage: build-bundles.sh [module-dir…]       (default: all three)
 # Env:   BUNDLES_OUT   (default <here>/bundles)
 #        NIX_VOLUME    docker volume for /nix (default rln-allocator-nix); the
 #                      first build fetches the rust toolchain (~10 min), later
@@ -35,7 +34,7 @@ IMAGE="${NIX_IMAGE:-nixos/nix:latest}"
 MODULES=("$@")
 DEFAULTED=0
 [ "${#MODULES[@]}" -gt 0 ] || DEFAULTED=1
-[ "${#MODULES[@]}" -gt 0 ] || MODULES=(rln-gifter-module keycard-auth-module pow-claim-auth-module allowlist-auth-module allowlist-sign-module pow-claim-capture-module)
+[ "${#MODULES[@]}" -gt 0 ] || MODULES=(rln-gifter-module rln-auth-module rln-sign-module)
 
 say() { printf 'build-bundles: %s\n' "$*" >&2; }
 die() { say "ERROR: $*"; exit 1; }
@@ -55,7 +54,6 @@ for m in "${MODULES[@]}"; do
             say "################################################################"
             say "WARNING: $m is MISSING from this checkout ($RUST/$m)."
             say "  No $m.lgx will be built; an image built now lacks it."
-            say "  The pow-claim modules live on branch feat/pow-claim-auth-vector."
             say "################################################################"
         else
             say "skipping $m: $RUST/$m is not in this checkout"

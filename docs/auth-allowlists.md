@@ -7,9 +7,9 @@ returns the credential as the nullifier, so each listed entry yields exactly one
 membership. They differ in who holds the key and what is signed with it.
 
 One module per side serves all three, dispatching on the request's
-`auth_type`: the verifier `allowlist_auth_module` (`rust/allowlist-auth-module`,
+`auth_type`: the verifier `rln_auth_module` (`rust/rln-auth-module`,
 each type keeps its own per-type config in `authVerifiers`) and the producer
-`allowlist_sign_module` (`rust/allowlist-sign-module`). The producer's
+`rln_sign_module` (`rust/rln-sign-module`). The producer's
 methods:
 
 - `produce_auth(args_json)`: the `rln_auth_vector` ProduceRequest
@@ -65,7 +65,7 @@ Common rules:
 
 | | `eth-allowlist` | `logos-allowlist` | `lez-allowlist` |
 |---|---|---|---|
-| Verifier / producer | `allowlist_auth_module` / `allowlist_sign_module` | `allowlist_auth_module` / `allowlist_sign_module` | `allowlist_auth_module` / `allowlist_sign_module` |
+| Verifier / producer | `rln_auth_module` / `rln_sign_module` | `rln_auth_module` / `rln_sign_module` | `rln_auth_module` / `rln_sign_module` |
 | Who holds the key | the module on the tester's client (file `eth_sign_key.hex`, 0600, under the module's persistence dir), or any wallet | the tester's own logos-blockchain node (its PoWClaim key); nothing is stored in the module | the module on the tester's client (file `lez_sign_key.hex`, 0600, under the persistence dir) |
 | Signature | secp256k1 `personal_sign` (EIP-191) | zero-knowledge signature over the node's key, proved by the node (about 15 s) | BIP-340 Schnorr over secp256k1 |
 | Digest | EIP-191 over the lowercase hex of `idc32` (binds no rate or allocator) | `sha256("logos/rln/logos-sign/2" \|\| idc32 \|\| rate_max u64 LE \|\| audience)` | `sha256("logos/rln/lez-sign/2" \|\| idc32 \|\| rate_max u64 LE \|\| audience)` |
@@ -86,7 +86,7 @@ Common rules:
   `{"private_key":"0x<32-byte hex>"}` signs with that key instead. `rate_max`
   and `audience` are not used: the signature does not bind them (see Common
   rules).
-- A key held by the earlier `eth_sign_module` is not read by the new module
+- A key held by the earlier `rln_sign_module` is not read by the new module
   (it lives in that module's own persistence directory): `import_key` it to
   keep the allowlisted address.
 - Verifier config: `{"allowlist":["0x…"]}`.
@@ -117,7 +117,7 @@ Common rules:
 
 ## lez-allowlist
 
-- The key is a plain secp256k1 key held by `allowlist_sign_module`. The account id is
+- The key is a plain secp256k1 key held by `rln_sign_module`. The account id is
   `sha256(LEE_PREFIX || xonly)` over the x-only public key, the same derivation
   as a LEZ account; the base58 form is what a LEZ wallet shows.
 - Producer: `identity` with `{"auth_type":"lez-allowlist"}` -> `id` = the

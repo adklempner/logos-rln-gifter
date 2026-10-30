@@ -168,7 +168,7 @@ Inputs: `VerifyRequest { auth_type, payload_hex, id_commitment_hex, rate, config
    when `config.nullifier == "installation"`. The gifter namespaces it as
    `chat-installation:<hex>` and persists it on successful registration.
 
-Error discipline follows `allowlist-auth-module`: an operator mistake (unparseable
+Error discipline follows `rln-auth-module`: an operator mistake (unparseable
 `config`, a non-URL `registry_url`, an unknown `nullifier` value) is `Err` →
 `{"error"}` envelope; anything attacker-controlled is a `reject` verdict.
 
@@ -296,7 +296,7 @@ C++ plugin; the Rust module needs a fresh clone.)
 
 Can be built and unit-tested now, independently of the chat side.
 
-- Copy `rust/allowlist-auth-module/{metadata.json,CMakeLists.txt,flake.nix,rust-lib/Cargo.toml}`;
+- Copy `rust/rln-auth-module/{metadata.json,CMakeLists.txt,flake.nix,rust-lib/Cargo.toml}`;
   rename to `chat_auth_module`, trait `ChatAuthModule`, `verify_auth` only.
 - `rust-lib/src/lib.rs`: `ChatInstallationVector: AuthVector` implementing
   §3.4; `verify_auth` is one line of `dispatch_verify`; `logos_module_install`.

@@ -43,8 +43,8 @@ builds it with `nix build ./rust/keycard-capture-module#lgx`).
 
 ```sh
 logosctl install rln-gifter-module.lgx -y
-logosctl install allowlist-sign-module.lgx -y      # recipes A, D, E (Ethereum key, logos-blockchain node key, LEZ account key)
-logosctl install pow-claim-capture-module.lgx -y   # recipe B (PoW claim; built from branch feat/pow-claim-auth-vector)
+logosctl install rln-sign-module.lgx -y      # recipes A, D, E (Ethereum key, logos-blockchain node key, LEZ account key)
+logosctl install rln-sign-module.lgx -y   # recipe B (PoW claim; built from branch feat/pow-claim-auth-vector)
 logosctl install keycard-capture-module.lgx -y     # recipe C (Status Keycard; darwin build from the operator)
 ```
 
@@ -75,8 +75,8 @@ once. `logosctl call liblogos_lez_rln_module wallet_status` must reach
 ### Recipe A — Ethereum key (`eth-allowlist`)
 
 ```sh
-logosctl module load allowlist_sign_module
-logosctl call allowlist_sign_module identity '{"auth_type":"eth-allowlist"}'
+logosctl module load rln_sign_module
+logosctl call rln_sign_module identity '{"auth_type":"eth-allowlist"}'
 # {"auth_type":"eth-allowlist","id":"0x…","persisted":true}
 ```
 
@@ -85,14 +85,14 @@ use and keeps it under its data directory; the address is stable for your
 installation and grants exactly one membership. Wait for the operator's
 "added" before step 4.
 
-Used the earlier `eth_sign_module`? Its key is not carried over. To keep the
+Used the earlier `rln_sign_module`? Its key is not carried over. To keep the
 address the operator already listed, import that key:
-`logosctl call allowlist_sign_module import_key '{"auth_type":"eth-allowlist","private_key":"0x<hex>"}'`
+`logosctl call rln_sign_module import_key '{"auth_type":"eth-allowlist","private_key":"0x<hex>"}'`
 (the key lands on a command line). If the module already minted a different
 key, the import is refused; add `"force":true` to replace it (the old address
 then no longer signs).
 
-### Recipe B — PoW reward claim (`pow-claim`)
+### Recipe B — PoW reward claim (`logos-pow-claim`)
 
 You need your own logos-blockchain node on the chain the operator names
 (same release tag as the operator's follower node, because the claim must be
@@ -135,7 +135,7 @@ on request. The chain parameters below are the public testnet's at 0.3.2
    `POW_AUDIENCE`.
 
 ```sh
-logosctl module load pow_claim_capture_module
+logosctl module load rln_sign_module
 ```
 
 One claim grants one membership. The pow-claim check is independent of the
@@ -176,18 +176,18 @@ a blinking reader that is not listed by PC/SC is not enumerated.
 
 You run your own logos-blockchain node with one PoWClaim key; its public key
 is your credential and the node signs for it (the key never leaves the node).
-Install `allowlist-sign-module.lgx`, then:
+Install `rln-sign-module.lgx`, then:
 
 ```sh
-logosctl module load allowlist_sign_module
-logosctl call allowlist_sign_module identity '{"auth_type":"logos-allowlist","args":{"node_url":"http://127.0.0.1:8080"}}'
+logosctl module load rln_sign_module
+logosctl call rln_sign_module identity '{"auth_type":"logos-allowlist","args":{"node_url":"http://127.0.0.1:8080"}}'
 # {"auth_type":"logos-allowlist","id":"<64 hex>","persisted":true,"source":"pow_status"}
 ```
 
 Send the `id` (K) to the operator and wait for "added". If the node has
 more than one PoWClaim key, add `"public_key":"<64 hex>"` to the args. Register
 as in step 4 with `"auth_type":"logos-allowlist"`,
-`"auth_provider":"allowlist_sign_module"` and
+`"auth_provider":"rln_sign_module"` and
 `"auth_args":{"node_url":"http://127.0.0.1:8080","rate_max":100,"audience":""}`
 (from the Docker client use `http://host.docker.internal:18080`). `rate_max`
 (default 100) and `audience` (default `""`) are signed with the commitment:
@@ -199,23 +199,23 @@ membership. Refusals: `not allowlisted` — K is not on the operator's list yet;
 
 ### Recipe E — LEZ account key (`lez-allowlist`)
 
-Install `allowlist-sign-module.lgx`, then:
+Install `rln-sign-module.lgx`, then:
 
 ```sh
-logosctl module load allowlist_sign_module
-logosctl call allowlist_sign_module identity '{"auth_type":"lez-allowlist"}'
+logosctl module load rln_sign_module
+logosctl call rln_sign_module identity '{"auth_type":"lez-allowlist"}'
 # {"auth_type":"lez-allowlist","id":"<64 hex>","id_base58":"…","persisted":true}
 ```
 
 Send the `id_base58` to the operator and wait for "added". Register as
 in step 4 with `"auth_type":"lez-allowlist"` and
-`"auth_provider":"allowlist_sign_module"`; `auth_args` is optional:
+`"auth_provider":"rln_sign_module"`; `auth_args` is optional:
 `{"rate_max":100,"audience":""}` are the defaults, and both are signed with the
 commitment (`rate_max` ≥ your `rate_limit`; `audience` must equal the
 operator's `LEZ_AUDIENCE`). The key is minted on
 first use and kept under the module's data dir (`persisted:true`); when it says
 `persisted:false` the id changes per run, so pin a key: `logosctl call
-allowlist_sign_module import_key '{"auth_type":"lez-allowlist","private_key":"0x<hex>"}'`
+rln_sign_module import_key '{"auth_type":"lez-allowlist","private_key":"0x<hex>"}'`
 prints its ids (the key lands on a
 command line; add `"force":true` to replace a different persisted key). Once
 imported, the module signs with it: do not repeat it in `auth_args`. One
@@ -237,10 +237,10 @@ Recipe A:
 logosctl call liblogos_rln_module register_membership \
   logos:testnet:fd322d32a46ddf57eece9db8d68e9b722262d1f770760fca63b8cb9e7775b971 \
   5e269b6a19fce081f5808b13442dcbc3522197638dd38df5a28bc4e55236b977 \
-  '[{"key":"rate_limit","value":"100"},{"key":"delegated","value":"true"},{"key":"gifter_peer_id","value":"<PEER>"},{"key":"gifter_multiaddr","value":"<MADDR>"},{"key":"auth_type","value":"eth-allowlist"},{"key":"auth_provider","value":"allowlist_sign_module"}]'
+  '[{"key":"rate_limit","value":"100"},{"key":"delegated","value":"true"},{"key":"gifter_peer_id","value":"<PEER>"},{"key":"gifter_multiaddr","value":"<MADDR>"},{"key":"auth_type","value":"eth-allowlist"},{"key":"auth_provider","value":"rln_sign_module"}]'
 ```
 
-Recipe B: the same with `"auth_type":"pow-claim"`, `"auth_provider":"pow_claim_capture_module"`
+Recipe B: the same with `"auth_type":"logos-pow-claim"`, `"auth_provider":"rln_sign_module"`
 and one more pair, the pinned `auth_args` from recipe B step 4 as escaped JSON:
 
 ```
@@ -251,7 +251,7 @@ Recipe C: the same with `"auth_type":"keycard-attestation"` and
 `"auth_provider":"keycard_capture_module"`; no `auth_args`.
 
 Recipes D and E: the same with `"auth_type":"logos-allowlist"` or
-`"lez-allowlist"`, `"auth_provider":"allowlist_sign_module"` and the
+`"lez-allowlist"`, `"auth_provider":"rln_sign_module"` and the
 `auth_args` pair, e.g. for D:
 
 ```

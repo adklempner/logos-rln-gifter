@@ -16,10 +16,10 @@
 # Sequence: daemon up → modules → libp2p with the persisted key (refuse to run
 # if the PeerId changed: that would orphan every tester) → publish
 # allocator.json BEFORE funding → wait for the lez wallet → serve with up to
-# five verifiers (pow-claim if POW_NODE_URL, keycard-attestation unless
-# KEYCARD_TRUSTED_CAS=none, logos-allowlist unless LOGOS_ALLOWLIST=0,
-# lez-allowlist unless LEZ_ALLOWLIST=0, eth-allowlist always; the three
-# allowlist types are all served by allowlist_auth_module) → supervise.
+# five auth types, all answered by rln_auth_module (logos-pow-claim if
+# POW_NODE_URL, keycard-attestation unless KEYCARD_TRUSTED_CAS=none,
+# logos-allowlist unless LOGOS_ALLOWLIST=0, lez-allowlist unless
+# LEZ_ALLOWLIST=0, eth-allowlist always) → supervise.
 # The three allowlist files (eth, logos, lez) are watched by mtime: a change
 # to any of them re-serves. The daemon
 # dies → exit 1 → compose restarts the container and this script re-serves
@@ -146,11 +146,8 @@ ctl_daemon_start
 # libp2p first (the gifter opens its client to it on load), the registry
 # module and every verifier BEFORE the gifter's serve. serve does not notice
 # an absent verifier (the host defers clients), so each load is checked here.
-VERIFIER_MODULES=""
-[ -z "$POW_NODE_URL" ] || VERIFIER_MODULES="$VERIFIER_MODULES pow_claim_auth_module"
-[ "$KEYCARD_CAS_JSON" = "[]" ] || VERIFIER_MODULES="$VERIFIER_MODULES keycard_auth_module"
-# allowlist_auth_module verifies eth-, logos- and lez-allowlist (one load).
-VERIFIER_MODULES="$VERIFIER_MODULES allowlist_auth_module"
+# rln_auth_module answers every auth type (one load).
+VERIFIER_MODULES="rln_auth_module"
 ctl_load libp2p_module
 ctl_load liblogos_lez_rln_module
 for m in $VERIFIER_MODULES; do ctl_load "$m"; done
@@ -173,7 +170,7 @@ al_say "peer id $PEER, listening on $LISTEN_ADDRS, published as $ADVERTISE_ADDR"
 # payer is still being funded. `served`/`funded` flip later.
 auth_types_json() {
     local t='['
-    [ -z "$POW_NODE_URL" ] || t="$t\"pow-claim\","
+    [ -z "$POW_NODE_URL" ] || t="$t\"logos-pow-claim\","
     [ "$KEYCARD_CAS_JSON" = "[]" ] || t="$t\"keycard-attestation\","
     [ "$LOGOS_ALLOWLIST" = 0 ] || t="$t\"logos-allowlist\","
     [ "$LEZ_ALLOWLIST" = 0 ] || t="$t\"lez-allowlist\","
@@ -332,24 +329,24 @@ serve_json() {
     LOGOS_ON="$LOGOS_ALLOWLIST" LOGOS_KEYS="$(read_allowlist_logos)" LOGOS_AUD="$LOGOS_AUDIENCE" \
     LEZ_ON="$LEZ_ALLOWLIST" LEZ_IDS="$(read_allowlist_lez)" LEZ_AUD="$LEZ_AUDIENCE" python3 -I -c '
 import json, os
-av = {"eth-allowlist": {"module": "allowlist_auth_module",
+av = {"eth-allowlist": {"module": "rln_auth_module",
                         "config": {"allowlist": json.loads(os.environ["ALLOW"])}}}
 if os.environ["LOGOS_ON"] != "0":
-    av["logos-allowlist"] = {"module": "allowlist_auth_module",
+    av["logos-allowlist"] = {"module": "rln_auth_module",
                              "config": {"allowlist": json.loads(os.environ["LOGOS_KEYS"]),
                                         "audience": os.environ["LOGOS_AUD"]}}
 if os.environ["LEZ_ON"] != "0":
-    av["lez-allowlist"] = {"module": "allowlist_auth_module",
+    av["lez-allowlist"] = {"module": "rln_auth_module",
                            "config": {"allowlist": json.loads(os.environ["LEZ_IDS"]),
                                       "audience": os.environ["LEZ_AUD"]}}
 if os.environ["NODE"]:
-    av["pow-claim"] = {"module": "pow_claim_auth_module", "config": {
+    av["logos-pow-claim"] = {"module": "rln_auth_module", "config": {
         "node_url": os.environ["NODE"], "audience": os.environ["AUD"], "min_payout": 0,
         "allow_direct_ownership": True, "allow_spend_locator": False,
         "http_timeout_ms": 5000, "audit_log": os.environ["AUDIT"]}}
 cas = json.loads(os.environ["CAS"])
 if cas:
-    av["keycard-attestation"] = {"module": "keycard_auth_module",
+    av["keycard-attestation"] = {"module": "rln_auth_module",
                                  "config": {"trusted_cas": cas}}
 o ={"config": os.environ["CFG"], "wallet": "", "authVerifiers": av,
      "consumedNullifiersPath": os.environ["NUL"], "maxRateLimit": int(os.environ["MAXR"])}

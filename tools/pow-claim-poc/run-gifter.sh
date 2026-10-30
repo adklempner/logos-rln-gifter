@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # run-gifter.sh — PoW-claim auth vector end to end through the RLN gifter, two daemons:
 #
-#   A (client):  node 1 (blockchain_module, :18080) + pow_claim_capture_module + libp2p + gifter
+#   A (client):  node 1 (blockchain_module, :18080) + rln_sign_module + libp2p + gifter
 #   B (gifter):  node 2 (follower, :18081) + libp2p (tcp/61871) + liblogos_lez_rln_module (stub)
-#                + pow_claim_auth_module (verifier, against node 2) + rln_gifter_module
+#                + rln_auth_module (verifier, against node 2) + rln_gifter_module
 #
 # Mine + claim on node 1, wait until the claim block is final on both nodes, then drive
 # `request` from A to B (provider path, authPayload replays, negatives), then stop node 1
@@ -31,8 +31,8 @@ _ov_libp2p="${LIBP2P_LGX:-}"; _ov_gifter="${GIFTER_LGX:-}"; _ov_stub="${STUB_LGX
 LIBP2P_LGX="${_ov_libp2p:-${LIBP2P_LGX:-/nix/store/gcjv35sb883m2nkv5lsfs5hhv7vvzi4z-logos-libp2p_module-module-lib-lgx-1.0.0/logos-libp2p_module-module-lib.lgx}}"
 GIFTER_LGX="${_ov_gifter:-${GIFTER_LGX:-/nix/store/00xms9gahgha8ygvh4d56fczkw83578a-logos-rln_gifter_module-module-lib-lgx-0.3.0/logos-rln_gifter_module-module-lib.lgx}}"
 STUB_LGX="${_ov_stub:-${STUB_LEZ_LGX:-/nix/store/3nym2lyqdwxvq9wryp7irpi3a43f7brq-logos-liblogos_lez_rln_module-module-lib-lgx-0.0.1/logos-liblogos_lez_rln_module-module-lib.lgx}}"
-PCM_LGX="${PCM_LGX:-/nix/store/dhj8kp98r2hn31yf0aw6xplkw0fbpmh7-logos-pow_claim_capture_module-module-lib-lgx-0.1.0/logos-pow_claim_capture_module-module-lib.lgx}"
-PCA_LGX="${PCA_LGX:-/nix/store/l0c5zwc0w8igrixf0rn70p4v25m2y9v4-logos-pow_claim_auth_module-module-lib-lgx-0.1.0/logos-pow_claim_auth_module-module-lib.lgx}"
+PCM_LGX="${PCM_LGX:-/nix/store/dhj8kp98r2hn31yf0aw6xplkw0fbpmh7-logos-rln_sign_module-module-lib-lgx-0.1.0/logos-rln_sign_module-module-lib.lgx}"
+PCA_LGX="${PCA_LGX:-/nix/store/l0c5zwc0w8igrixf0rn70p4v25m2y9v4-logos-rln_auth_module-module-lib-lgx-0.1.0/logos-rln_auth_module-module-lib.lgx}"
 LOGOSCORE="${LOGOSCORE:-$POC_DIR/runs/logos/bin/logoscore}"
 if [ -z "${BM_LGX:-}" ]; then
     BM_LGX=$(find -L "$POC_DIR/runs/bm-lgx/" -maxdepth 1 -name '*.lgx' 2>/dev/null | head -1)
@@ -139,7 +139,7 @@ say "node 2 view: $NODE2_VIEW"
 
 # ---------------------------------------------------------------- 6. daemon B gifter
 step gifter-b
-for m in libp2p_module liblogos_lez_rln_module pow_claim_auth_module rln_gifter_module; do
+for m in libp2p_module liblogos_lez_rln_module rln_auth_module rln_gifter_module; do
     out=$(_with_timeout 60 env -u TMPDIR LOGOSCORE_CONFIG_DIR="$RUN_B/config" "$LOGOSCORE" --json load-module "$m" 2>&1 || true)
     printf '%s\n' "$out" >> "$RUN_B/daemon.log"
     case "$out" in *'"status":"ok"'*) say "B loaded $m" ;; *) fail "B load-module $m: $out" ;; esac
@@ -152,7 +152,7 @@ import json, sys
 cfg, wal, rb, url, aud = sys.argv[1:6]
 print(json.dumps({"config": cfg, "wallet": wal, "maxRateLimit": 100,
     "consumedNullifiersPath": rb + "/consumed_nullifiers.txt",
-    "authVerifiers": {"pow-claim": {"module": "pow_claim_auth_module", "config": {
+    "authVerifiers": {"logos-pow-claim": {"module": "rln_auth_module", "config": {
         "node_url": url, "audience": aud, "min_payout": 0, "allow_direct_ownership": True,
         "allow_spend_locator": False, "http_timeout_ms": 5000,
         "audit_log": rb + "/verifier-audit.jsonl"}}}}, separators=(",", ":")))' \
@@ -164,7 +164,7 @@ LP_B=$(gf_check_lp_logs "$RUN_B")
 
 # ---------------------------------------------------------------- 7. daemon A client + payloads
 step client-a
-for m in pow_claim_capture_module libp2p_module rln_gifter_module; do
+for m in rln_sign_module libp2p_module rln_gifter_module; do
     out=$(_with_timeout 60 env -u TMPDIR LOGOSCORE_CONFIG_DIR="$RUN_A/config" "$LOGOSCORE" --json load-module "$m" 2>&1 || true)
     printf '%s\n' "$out" >> "$RUN_A/daemon.log"
     case "$out" in *'"status":"ok"'*) say "A loaded $m" ;; *) fail "A load-module $m: $out" ;; esac
@@ -208,7 +208,7 @@ gp, ga, aud, rm, idc, rate, at, mode = sys.argv[1:9]
 payload = sys.argv[9] if len(sys.argv) > 9 else ""
 d = {"gifterPeerId": gp, "gifterMultiaddr": ga, "identityCommitment": idc, "rate": int(rate), "authType": at}
 if mode == "provider":
-    d["authProvider"] = "pow_claim_capture_module"
+    d["authProvider"] = "rln_sign_module"
     d["authArgs"] = {"node_url": "http://127.0.0.1:18080", "audience": aud, "rate_max": int(rm)}
 else:
     d["authPayload"] = payload
@@ -257,17 +257,17 @@ sys.exit(0 if ok else 1)' "$last" "$aud" "$NUL" "$anode" 2>/dev/null || { ok=0; 
 
 # ---------------------------------------------------------------- 8. provider path
 step pos-provider
-run_req pos-provider "$(mkbody "$IDC" 100 pow-claim provider)" "$POC_EXPECT_REGISTER_ERR" accept 1
+run_req pos-provider "$(mkbody "$IDC" 100 logos-pow-claim provider)" "$POC_EXPECT_REGISTER_ERR" accept 1
 
 # ---------------------------------------------------------------- 9. replays / negatives
 step replays
-run_req pos-replay   "$(mkbody "$IDC"  100 pow-claim    payload "$P")"       "$POC_EXPECT_REGISTER_ERR" accept 1
-run_req neg-sig      "$(mkbody "$IDC"  100 pow-claim    payload "$P_SIG")"   "signature"                reject 0
-run_req neg-audience "$(mkbody "$IDC"  100 pow-claim    payload "$P_EVIL")"  "signature"                reject 0
-run_req neg-idc      "$(mkbody "$IDC2" 100 pow-claim    payload "$P")"       "signature"                reject 0
-run_req neg-trunc    "$(mkbody "$IDC"  100 pow-claim    payload "$P_TRUNC")" "payload|length"           reject 0
+run_req pos-replay   "$(mkbody "$IDC"  100 logos-pow-claim payload "$P")"       "$POC_EXPECT_REGISTER_ERR" accept 1
+run_req neg-sig      "$(mkbody "$IDC"  100 logos-pow-claim payload "$P_SIG")"   "signature"                reject 0
+run_req neg-audience "$(mkbody "$IDC"  100 logos-pow-claim payload "$P_EVIL")"  "signature"                reject 0
+run_req neg-idc      "$(mkbody "$IDC2" 100 logos-pow-claim payload "$P")"       "signature"                reject 0
+run_req neg-trunc    "$(mkbody "$IDC"  100 logos-pow-claim payload "$P_TRUNC")" "payload|length"           reject 0
 run_req neg-authtype "$(mkbody "$IDC"  100 pow-claim-v0 payload "$P")"       "unsupported authentication_type" none 0
-run_req neg-rate     "$(mkbody "$IDC"  100 pow-claim    payload "$P50")"     "rate_max"                 reject 0
+run_req neg-rate     "$(mkbody "$IDC"  100 logos-pow-claim payload "$P50")"     "rate_max"                 reject 0
 
 # ---------------------------------------------------------------- 10. node 1 down
 step node1-down
@@ -279,10 +279,10 @@ if curl -s --max-time 3 "$URL1/cryptarchia/info" >/dev/null 2>&1; then
 else
     check 1 "node 1 HTTP down"
 fi
-run_req pos-node1-down "$(mkbody "$IDC" 100 pow-claim payload "$P")" "$POC_EXPECT_REGISTER_ERR" accept 1
+run_req pos-node1-down "$(mkbody "$IDC" 100 logos-pow-claim payload "$P")" "$POC_EXPECT_REGISTER_ERR" accept 1
 # contrast: verifier pointed at the dead node 1
 gf_serve "$RUN_B" "$(serve_json "$URL1")" >/dev/null
-run_req pos-dead-node "$(mkbody "$IDC" 100 pow-claim payload "$P")" "auth verifier pow_claim_auth_module.*unreachable" error 0
+run_req pos-dead-node "$(mkbody "$IDC" 100 logos-pow-claim payload "$P")" "auth verifier rln_auth_module.*unreachable" error 0
 gf_serve "$RUN_B" "$(serve_json "$URL2")" >/dev/null
 say "re-served with node_url $URL2"
 
@@ -319,8 +319,8 @@ except Exception:
     view = e["S_VIEW"]
 s = {
     "run": e["S_RUN"],
-    "artifacts": {"blockchain_module": e["S_BM"], "pow_claim_capture_module": e["S_PCM"],
-                  "pow_claim_auth_module": e["S_PCA"], "libp2p_module": e["S_LIBP2P"],
+    "artifacts": {"blockchain_module": e["S_BM"], "rln_sign_module": e["S_PCM"],
+                  "rln_auth_module": e["S_PCA"], "libp2p_module": e["S_LIBP2P"],
                   "libp2p_rev": e["S_LREV"] or None, "rln_gifter_module": e["S_GIFTER"],
                   "gifter_rev": e["S_GREV"] or None, "liblogos_lez_rln_module_stub": e["S_STUBLGX"]},
     "peers": {"gifter_b": e["S_GPEER"], "client_a": e["S_APEER"], "node1": e["S_N1PEER"]},

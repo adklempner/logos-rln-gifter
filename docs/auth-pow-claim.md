@@ -1,4 +1,4 @@
-# `pow-claim` — a gifter auth vector backed by logos-blockchain PoW rewards
+# `logos-pow-claim` — a gifter auth vector backed by logos-blockchain PoW rewards
 
 Design note. Nothing in this document is implemented; §6 says what has to be
 built and in which order. Companion to `auth-chat-installation.md`, which
@@ -133,7 +133,7 @@ claim per block network-wide; `slot_duration` 1 s, ~20 slots per block.
 
 ### 3.1 `auth_type`
 
-`pow-claim`.
+`logos-pow-claim`.
 
 ### 3.2 Challenge
 
@@ -216,7 +216,7 @@ Inputs: `VerifyRequest { payload_hex, id_commitment_hex, rate, config }`.
      `spend_tx_hash`. Require an `opcode 0` op in `S` with
      `note_id ∈ inputs` and an output `{ pk == K, value >= min_payout }`.
 8. `Verdict::accept(nullifier = hex(pow_nullifier))` — 64 lowercase hex
-   chars; the gifter namespaces it `pow-claim:<hex>` and persists it on
+   chars; the gifter namespaces it `logos-pow-claim:<hex>` and persists it on
    successful registration.
 
 **Why `note_id ∈ inputs` is the load-bearing check.** Claim ops are
@@ -259,7 +259,7 @@ the 30 s verifier window on the gifter's single worker.
 
 ### 4.1 Where it lives
 
-A new client-side module, `pow_claim_capture_module`, that talks to the
+A new client-side module, `rln_sign_module`, that talks to the
 user's node over its in-process HTTP API (`http_addr`, default
 `127.0.0.1:8080` — `nodes/node/binary/src/config/api/serde.rs:34-41`).
 
@@ -282,7 +282,7 @@ shipped module cannot mine at all.
 
 ### 4.2 `produce_auth(args_json) → json`
 
-In: `ProduceRequest { auth_type: "pow-claim", id_commitment_hex, args }`.
+In: `ProduceRequest { auth_type: "logos-pow-claim", id_commitment_hex, args }`.
 `args` arrives as a JSON **string** (the RLN membership module stringifies
 `auth_args`); parse it to:
 
@@ -323,8 +323,8 @@ Out: `{"payload_hex": …}` or `{"error": …}` via `rln_auth_vector::dispatch_p
 RLN membership module `RegistryOptions`:
 
 ```
-auth_type:     "pow-claim"
-auth_provider: "pow_claim_capture_module"
+auth_type:     "logos-pow-claim"
+auth_provider: "rln_sign_module"
 auth_args:     {"node_url": "http://127.0.0.1:8080", "rate_max": 100}
 ```
 
@@ -346,8 +346,8 @@ adds it was not verified.
 
 ```json
 "authVerifiers": {
-  "pow-claim": {
-    "module": "pow_claim_auth_module",
+  "logos-pow-claim": {
+    "module": "rln_auth_module",
     "config": { "node_url": "http://127.0.0.1:8080" }
   }
 }
@@ -362,12 +362,12 @@ against a single compromised RPC.
 | Request frame | 4 096 B | 234 B (298 B with locator) |
 | Verifier call | 30 s, single worker | Groth16 verify (ms) + 3–5 local HTTP calls |
 | Producer call | 120 s | `/pow/status` + bounded block scan + one `/wallet/sign/zk` (KMS proving, seconds) |
-| Replay | nullifier store | `pow-claim:<pow_nullifier hex>` |
+| Replay | nullifier store | `logos-pow-claim:<pow_nullifier hex>` |
 | Usable after | LIB | 30 blocks standalone, 120 blocks devnet/testnet |
 
 ## 6. Implementation roadmap
 
-### A. `logos-rln-gifter` — `rust/pow-claim-auth-module` (verifier)
+### A. `logos-rln-gifter` — `rust/rln-auth-module` (verifier)
 
 - Skeleton copied from `rust/eth-auth-module/` (`metadata.json`,
   `CMakeLists.txt`, `flake.nix`, `rust-lib/Cargo.toml` with `[workspace]`,
@@ -389,9 +389,9 @@ against a single compromised RPC.
     note id); audience mismatch; quorum disagreement; truncated / trailing
     bytes;
   - `Err`: missing `node_url`; unreadable `zksign_vk_path`.
-- Optional `POW_CLAIM_AUTH_TYPE = "pow-claim"` in `crates/rln-auth-vector`.
+- Optional `POW_CLAIM_AUTH_TYPE = "logos-pow-claim"` in `crates/rln-auth-vector`.
 
-### B. `logos-rln-gifter` — `rust/pow-claim-capture-module` (producer)
+### B. `logos-rln-gifter` — `rust/rln-sign-module` (producer)
 
 - `produce_auth` only; dependencies `ureq`, `serde_json`, `blake2`, `hex`,
   `rln_auth_vector`, `logos-blockchain-poseidon2` (for `NoteId` in the path-B
@@ -447,7 +447,7 @@ request for the same nullifier is refused; the front-run fixture is refused.
   miner sweeps the note; the spend locator restores it.
 - **VK pinning.** The zkSign VK is tied to a circuit release; `zksign_vk_path`
   tracks upgrades, and the module's chain-crate pins must follow the network.
-- **Composability.** `pow-claim` can be the scarcity layer that
+- **Composability.** `logos-pow-claim` can be the scarcity layer that
   `chat-installation` lacks: an application may require both at the
   application layer today, and a combined vector carrying both payloads is a
   straightforward follow-up once the two exist.

@@ -37,7 +37,7 @@ DATA="${CLIENT_DATA:-/var/lib/allocator-client}"
 ALLOCATOR_PEER_ID="${ALLOCATOR_PEER_ID:?ALLOCATOR_PEER_ID is required (allocator.json gifter_peer_id)}"
 ALLOCATOR_MULTIADDR="${ALLOCATOR_MULTIADDR:?ALLOCATOR_MULTIADDR is required (allocator.json gifter_multiaddr)}"
 AUTH_TYPE="${CLIENT_AUTH_TYPE:-eth-allowlist}"
-AUTH_PROVIDER="${CLIENT_AUTH_PROVIDER:-allowlist_sign_module}"
+AUTH_PROVIDER="${CLIENT_AUTH_PROVIDER:-rln_sign_module}"
 AUTH_ARGS="${CLIENT_AUTH_ARGS:-}"
 # A stringified object ("{\"rate_max\":100}") is unwrapped once; anything that
 # is not JSON is left as given (the request build then refuses it).
@@ -126,7 +126,7 @@ PEER=$(al_libp2p_up_any "/ip4/0.0.0.0/tcp/0")
 al_say "client peer id $PEER"
 
 # ---------------------------------------------------------------- producer
-# allowlist_sign_module holds the eth- and lez-allowlist keys and drives the
+# rln_sign_module holds the eth- and lez-allowlist keys and drives the
 # logos node's key. A private_key in CLIENT_AUTH_ARGS (eth/lez) is imported
 # first (import_key), so the printed id is the one that will sign (the module
 # key is minted fresh when the host gives it no persistence path, which
@@ -134,7 +134,7 @@ al_say "client peer id $PEER"
 # stable). Otherwise identity reads it; for logos the args (node_url,
 # public_key) go along, and node_url must be reachable from here.
 case "$AUTH_PROVIDER" in
-    allowlist_sign_module)
+    rln_sign_module)
         PK=$(ARGS="$AUTH_ARGS" python3 -I -c 'import json, os
 try: print(json.loads(os.environ["ARGS"]).get("private_key", "") or "")
 except Exception: print("")')
@@ -155,11 +155,11 @@ a = {k: v for k, v in a.items() if k != "private_key"} if isinstance(a, dict) el
 print(json.dumps({"auth_type": os.environ["AT"], "args": a}, separators=(",", ":")))') \
                 || al_die "CLIENT_AUTH_ARGS is not JSON"
         fi
-        IRES=$(al_call allowlist_sign_module "$IMETHOD" "$IREQ" | al_res) || IRES=""
+        IRES=$(al_call rln_sign_module "$IMETHOD" "$IREQ" | al_res) || IRES=""
         IERR=$(al_field "$IRES" error)
         ADDR=$(al_field "$IRES" id)
-        [ -z "$IERR" ] || al_die "allowlist_sign_module.$IMETHOD ($AUTH_TYPE) refused: $IERR"
-        [ -n "$ADDR" ] || al_die "allowlist_sign_module.$IMETHOD ($AUTH_TYPE) answered no id (for logos-allowlist: is node_url in CLIENT_AUTH_ARGS reachable from the container, e.g. http://host.docker.internal:18080, and does the node have exactly one PoWClaim key or public_key given?): ${IRES:-<no reply>}"
+        [ -z "$IERR" ] || al_die "rln_sign_module.$IMETHOD ($AUTH_TYPE) refused: $IERR"
+        [ -n "$ADDR" ] || al_die "rln_sign_module.$IMETHOD ($AUTH_TYPE) answered no id (for logos-allowlist: is node_url in CLIENT_AUTH_ARGS reachable from the container, e.g. http://host.docker.internal:18080, and does the node have exactly one PoWClaim key or public_key given?): ${IRES:-<no reply>}"
         # The module holds the key now: the request's authArgs carry none.
         AUTH_ARGS=$(strip_private_key)
         case "$AUTH_TYPE" in

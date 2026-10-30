@@ -6,7 +6,7 @@
 # Topology (two logoscore daemons on this host):
 #   allocator  run-allocator.sh with a PERSISTED node key, liblogos_lez_rln_module
 #              replaced by the PoC stub (register_member answers non-JSON ->
-#              RegisterError::NotSubmitted), allowlist_auth_module as the
+#              RegisterError::NotSubmitted), rln_auth_module as the
 #              verifier of all three allowlist types
 #   client     libp2p_module + rln_gifter_module (client half), tcp/0
 #
@@ -22,7 +22,7 @@
 #   A7 after the restart the client, still holding the OLD peer id, is served
 #   A8 `serve` refresh to an open gifter: an unauthenticated request now reaches
 #      register_member
-#   A9 the PRODUCER module: the client's allowlist_sign_module signs the
+#   A9 the PRODUCER module: the client's rln_sign_module signs the
 #      commitment during the request (authProvider, no cast) with its
 #      module-owned eth key; the allocator, re-served with that key's
 #      `identity` id allowlisted, accepts it and reaches register_member once
@@ -30,14 +30,14 @@
 #      refused by the REQUESTER before any dial — `invalid_commitment` — and the
 #      registry module is never called (the gifter applies the same check on
 #      arrival; lez module 5.1.0 refuses it a third time before signing)
-#   A11 logos-allowlist: allowlist_sign_module signs through a real
+#   A11 logos-allowlist: rln_sign_module signs through a real
 #      logos-blockchain node (LOGOS_NODE_URL, e.g. http://127.0.0.1:8080;
 #      SKIPPED when unset); an unlisted key is rejected by name, the node's
 #      PoWClaim key allowlisted is accepted and reaches register_member
-#   A12 lez-allowlist: allowlist_sign_module's own lez key; unlisted rejected
+#   A12 lez-allowlist: rln_sign_module's own lez key; unlisted rejected
 #      by name, listed (base58 form, then the hex form) accepted and reaches
 #      register_member
-# From A9 on every serve names allowlist_auth_module for each allowlist type
+# From A9 on every serve names rln_auth_module for each allowlist type
 # it carries (eth stays listed through A11/A12, logos through A12), so one
 # verifier instance routes all three by auth_type.
 #
@@ -69,8 +69,8 @@ if [ ! -e "${STUB_LEZ_LGX:-}" ]; then
 fi
 LOGOSCORE="${LOGOSCORE:-$POC/runs/logos/bin/logoscore}"
 GIFTER_LGX="${GIFTER_LGX:-$(find "$REPO/rust/rln-gifter-module/result-lgx/" -maxdepth 1 -name "*.lgx" 2>/dev/null | head -1)}"
-ALLOWLIST_AUTH_LGX="${ALLOWLIST_AUTH_LGX:-$(find "$REPO/rust/allowlist-auth-module/result-lgx/" -maxdepth 1 -name "*.lgx" 2>/dev/null | head -1)}"
-ALLOWLIST_SIGN_LGX="${ALLOWLIST_SIGN_LGX:-$(find "$REPO/rust/allowlist-sign-module/result-lgx/" -maxdepth 1 -name "*.lgx" 2>/dev/null | head -1)}"
+ALLOWLIST_AUTH_LGX="${ALLOWLIST_AUTH_LGX:-$(find "$REPO/rust/rln-auth-module/result-lgx/" -maxdepth 1 -name "*.lgx" 2>/dev/null | head -1)}"
+ALLOWLIST_SIGN_LGX="${ALLOWLIST_SIGN_LGX:-$(find "$REPO/rust/rln-sign-module/result-lgx/" -maxdepth 1 -name "*.lgx" 2>/dev/null | head -1)}"
 CAST="${CAST:-$HOME/.foundry/bin/cast}"
 GIFTER_PORT="${GIFTER_PORT:-61871}"
 export LOGOSCORE
@@ -98,7 +98,8 @@ OTHER_PK=0x4343434343434343434343434343434343434343434343434343434343434343
 ALLOW_ADDR=$("$CAST" wallet address --private-key "$ALLOW_PK" | tr 'A-F' 'a-f')
 # personal_sign over the LOWERCASE HEX of the commitment (no 0x: cast must see a
 # utf-8 string, not bytes); cast emits 0x||r||s||v with v in {27,28}.
-sign_commitment() { "$CAST" wallet sign --private-key "$1" "$2" | sed 's/^0x//'; }
+# A wallet signature becomes a framed payload: version 2 ‖ r‖s‖v ‖ rate_max 100 LE.
+sign_commitment() { printf '02%s6400000000000000' "$("$CAST" wallet sign --private-key "$1" "$2" | sed 's/^0x//')"; }
 # A canonical BN254 scalar, little-endian: 31 random bytes + a small top byte.
 # 32 random bytes exceed r about four times in five, and both the requester
 # and the gifter refuse those since the 2026-10-14 pre-check (A10).
@@ -107,12 +108,12 @@ rand_commitment() { printf '%s0a' "$(openssl rand -hex 31)"; }
 # ---------------------------------------------------------------- allocator up
 export ALLOCATOR_HOME="$AHOME" LIBP2P_LGX GIFTER_LGX
 # One verifier module for eth-, logos- and lez-allowlist.
-EXTRA_LGX="$ALLOWLIST_AUTH_LGX"; EXTRA_MODULES="allowlist_auth_module"
+EXTRA_LGX="$ALLOWLIST_AUTH_LGX"; EXTRA_MODULES="rln_auth_module"
 export LEZ_RLN_LGX="$STUB_LEZ_LGX" EXTRA_LGX EXTRA_MODULES
 export LISTEN_ADDR="/ip4/127.0.0.1/tcp/$GIFTER_PORT" WALLET_WAIT_S=0 MAX_RATE_LIMIT=100
 export REGISTRY_CONFIG="ChainlessConfig11111111111111111111111" PAYER="ChainlessPayer111111111111111111111111"
-export AUTH_VERIFIERS="{\"eth-allowlist\":{\"module\":\"allowlist_auth_module\",\"config\":{\"allowlist\":[\"$ALLOW_ADDR\"]}}}"
-# authVerifiers naming allowlist_auth_module for each type given a non-empty
+export AUTH_VERIFIERS="{\"eth-allowlist\":{\"module\":\"rln_auth_module\",\"config\":{\"allowlist\":[\"$ALLOW_ADDR\"]}}}"
+# authVerifiers naming rln_auth_module for each type given a non-empty
 # id (one id per list); an empty argument leaves that type out.
 allowlist_verifiers() { # <eth id> <logos id> <lez id>
     ETH="$1" LOGOS="$2" LEZ="$3" python3 -I -c '
@@ -120,7 +121,7 @@ import json, os
 av = {}
 for t, k in (("eth-allowlist", "ETH"), ("logos-allowlist", "LOGOS"), ("lez-allowlist", "LEZ")):
     if os.environ[k]:
-        av[t] = {"module": "allowlist_auth_module", "config": {"allowlist": [os.environ[k]]}}
+        av[t] = {"module": "rln_auth_module", "config": {"allowlist": [os.environ[k]]}}
 print(json.dumps(av, separators=(",", ":")))
 '
 }
@@ -149,7 +150,7 @@ al_install_lgx "$ALLOWLIST_SIGN_LGX" "$CLIENT/modules"
 al_daemon_start "$CLIENT"
 al_load "$CLIENT" libp2p_module
 al_load "$CLIENT" rln_gifter_module
-al_load "$CLIENT" allowlist_sign_module
+al_load "$CLIENT" rln_sign_module
 CPEER=$(al_libp2p_up "$CLIENT" "/ip4/127.0.0.1/tcp/0")
 al_say "client peer $CPEER"
 
@@ -187,7 +188,7 @@ check "$(contains "$R" "unsupported authentication_type" && echo 1 || echo 0)" A
 
 al_say "==== A3 garbage payload reaches the verifier"
 IDC=$(rand_commitment)
-R=$(al_request "$CLIENT" "$(req_json "$IDC" eth-allowlist aaaaaaaaaaaaaaaaaaaa)" a3) || R=""
+R=$(al_request "$CLIENT" "$(req_json "$IDC" eth-allowlist "02$(python3 -I -c 'print("aa" * 65)')6400000000000000")" a3) || R=""
 check "$(contains "$R" "signature verification failed" && echo 1 || echo 0)" A3 "verifier rejected: ${R:-<no reply>}"
 
 al_say "==== A4 valid signature, NON-allowlisted signer"
@@ -235,15 +236,15 @@ ok=0; contains "$R" "register_member" && [ "$((N1 - N0))" = 1 ] && ok=1
 check "$ok" A8 "open request reached register_member: ${R:-<no reply>}"
 
 # ---------------------------------------------------------------- A9 producer module
-al_say "==== A9 allowlist_sign_module (eth producer) signs during the request; allocator re-served with its id"
-SIGN_ADDR=$(al_field "$(al_call "$CLIENT" allowlist_sign_module identity '{"auth_type":"eth-allowlist"}' | al_res)" id) || SIGN_ADDR=""
+al_say "==== A9 rln_sign_module (eth producer) signs during the request; allocator re-served with its id"
+SIGN_ADDR=$(al_field "$(al_call "$CLIENT" rln_sign_module identity '{"auth_type":"eth-allowlist"}' | al_res)" id) || SIGN_ADDR=""
 ok=0; case "$SIGN_ADDR" in 0x[0-9a-f]*) [ "${#SIGN_ADDR}" = 42 ] && ok=1 ;; esac
-check "$ok" A9a "allowlist_sign_module.identity eth-allowlist: ${SIGN_ADDR:-<none>}"
+check "$ok" A9a "rln_sign_module.identity eth-allowlist: ${SIGN_ADDR:-<none>}"
 AUTH_VERIFIERS=$(allowlist_verifiers "$SIGN_ADDR" "" ""); export AUTH_VERIFIERS
 "$HERE/run-allocator.sh" serve > "$WORK/serve-sign.json" || al_die "serve refresh (producer allowlist) failed"
 N0=$(stub_calls)
 IDC=$(rand_commitment)
-R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" eth-allowlist allowlist_sign_module)" a9) || R=""
+R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" eth-allowlist rln_sign_module)" a9) || R=""
 N1=$(stub_calls)
 ok=0; contains "$R" "register_member" && [ "$((N1 - N0))" = 1 ] && ok=1
 check "$ok" A9 "producer-signed request accepted, registry called once ($N0->$N1): ${R:-<no reply>}"
@@ -258,39 +259,39 @@ check "$(contains "$R" "not allowlisted" && echo 1 || echo 0)" A9b "a foreign ke
 al_say "==== A10 non-BN254 commitment refused client-side, registry never called"
 N0=$(stub_calls)
 IDC=$(printf 'ff%.0s' $(seq 1 32))
-R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" eth-allowlist allowlist_sign_module)" a10) || R=""
+R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" eth-allowlist rln_sign_module)" a10) || R=""
 N1=$(stub_calls)
 ok=0; contains "$R" "invalid_commitment" && [ "$N1" = "$N0" ] && ok=1
 check "$ok" A10 "refused before any io ($N0->$N1 registry calls): ${R:-<no reply>}"
 IDC=$(printf '00%.0s' $(seq 1 32))
-R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" eth-allowlist allowlist_sign_module)" a10b) || R=""
+R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" eth-allowlist rln_sign_module)" a10b) || R=""
 check "$(contains "$R" "invalid_commitment: zero" && echo 1 || echo 0)" A10b "zero commitment refused: ${R:-<no reply>}"
 
 # ---------------------------------------------------------------- A11 logos-allowlist
-al_say "==== A11 allowlist_sign_module (logos producer) through a logos-blockchain node"
+al_say "==== A11 rln_sign_module (logos producer) through a logos-blockchain node"
 SIGN_K=""
 if [ -z "${LOGOS_NODE_URL:-}" ]; then
     al_say "SKIP A11: set LOGOS_NODE_URL (a logos-blockchain node with one PoWClaim key, e.g. http://127.0.0.1:8080)"; RESULTS="${RESULTS}A11=skip "
 else
     NODE_ARGS="{\"node_url\":\"$LOGOS_NODE_URL\"}"
-    A11_ENV=$(al_call "$CLIENT" allowlist_sign_module identity "{\"auth_type\":\"logos-allowlist\",\"args\":$NODE_ARGS}")
+    A11_ENV=$(al_call "$CLIENT" rln_sign_module identity "{\"auth_type\":\"logos-allowlist\",\"args\":$NODE_ARGS}")
     printf '%s\n' "$A11_ENV" > "$WORK/a11a.env.json"
     SIGN_K=$(al_field "$(printf '%s' "$A11_ENV" | al_res)" id) || SIGN_K=""
     [ -n "$SIGN_K" ] || al_say "A11a raw reply: ${A11_ENV:-<empty>}"
     ok=0; [ "${#SIGN_K}" = 64 ] && ok=1
-    check "$ok" A11a "allowlist_sign_module.identity logos-allowlist from $LOGOS_NODE_URL: ${SIGN_K:-<none>}"
+    check "$ok" A11a "rln_sign_module.identity logos-allowlist from $LOGOS_NODE_URL: ${SIGN_K:-<none>}"
     if [ "$ok" = 1 ]; then
         OTHER_K=$(openssl rand -hex 32)
         AUTH_VERIFIERS=$(allowlist_verifiers "$SIGN_ADDR" "$OTHER_K" ""); export AUTH_VERIFIERS
         "$HERE/run-allocator.sh" serve > "$WORK/serve-logos-other.json" || al_die "serve refresh (logos, unlisted) failed"
         IDC=$(rand_commitment)
-        R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" logos-allowlist allowlist_sign_module "$NODE_ARGS")" a11b) || R=""
+        R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" logos-allowlist rln_sign_module "$NODE_ARGS")" a11b) || R=""
         check "$(contains "$R" "not allowlisted" && echo 1 || echo 0)" A11b "node key not on the list is refused by name: ${R:-<no reply>}"
         AUTH_VERIFIERS=$(allowlist_verifiers "$SIGN_ADDR" "$SIGN_K" ""); export AUTH_VERIFIERS
         "$HERE/run-allocator.sh" serve > "$WORK/serve-logos.json" || al_die "serve refresh (logos allowlist) failed"
         N0=$(stub_calls)
         IDC=$(rand_commitment)
-        R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" logos-allowlist allowlist_sign_module "$NODE_ARGS")" a11) || R=""
+        R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" logos-allowlist rln_sign_module "$NODE_ARGS")" a11) || R=""
         N1=$(stub_calls)
         ok=0; contains "$R" "register_member" && [ "$((N1 - N0))" = 1 ] && ok=1
         check "$ok" A11 "node-signed request accepted, registry called once ($N0->$N1): ${R:-<no reply>}"
@@ -298,18 +299,18 @@ else
 fi
 
 # ---------------------------------------------------------------- A12 lez-allowlist
-al_say "==== A12 allowlist_sign_module (lez producer): module-owned account key"
+al_say "==== A12 rln_sign_module (lez producer): module-owned account key"
 LEZ_B58=""
-LEZ_RES=$(al_call "$CLIENT" allowlist_sign_module identity '{"auth_type":"lez-allowlist"}' | al_res) || LEZ_RES=""
+LEZ_RES=$(al_call "$CLIENT" rln_sign_module identity '{"auth_type":"lez-allowlist"}' | al_res) || LEZ_RES=""
 LEZ_HEX=$(al_field "$LEZ_RES" id); LEZ_B58=$(al_field "$LEZ_RES" id_base58)
 ok=0; [ "${#LEZ_HEX}" = 64 ] && [ -n "$LEZ_B58" ] && ok=1
-check "$ok" A12a "allowlist_sign_module.identity lez-allowlist: id ${LEZ_HEX:-<none>} id_base58 ${LEZ_B58:-<none>}"
+check "$ok" A12a "rln_sign_module.identity lez-allowlist: id ${LEZ_HEX:-<none>} id_base58 ${LEZ_B58:-<none>}"
 if [ "$ok" = 1 ]; then
     OTHER_ID=$(openssl rand -hex 32)
     AUTH_VERIFIERS=$(allowlist_verifiers "$SIGN_ADDR" "$SIGN_K" "$OTHER_ID"); export AUTH_VERIFIERS
     "$HERE/run-allocator.sh" serve > "$WORK/serve-lez-other.json" || al_die "serve refresh (lez, unlisted) failed"
     IDC=$(rand_commitment)
-    R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" lez-allowlist allowlist_sign_module)" a12b) || R=""
+    R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" lez-allowlist rln_sign_module)" a12b) || R=""
     check "$(contains "$R" "not allowlisted" && echo 1 || echo 0)" A12b "module account not on the list is refused by name: ${R:-<no reply>}"
     # Listed as base58, then (fresh commitment, fresh nullifier release on
     # NotSubmitted) as the 64-hex form of the same account.
@@ -317,7 +318,7 @@ if [ "$ok" = 1 ]; then
     "$HERE/run-allocator.sh" serve > "$WORK/serve-lez.json" || al_die "serve refresh (lez allowlist) failed"
     N0=$(stub_calls)
     IDC=$(rand_commitment)
-    R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" lez-allowlist allowlist_sign_module)" a12c) || R=""
+    R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" lez-allowlist rln_sign_module)" a12c) || R=""
     N1=$(stub_calls)
     ok=0; contains "$R" "register_member" && [ "$((N1 - N0))" = 1 ] && ok=1
     check "$ok" A12c "listed by base58: accepted, registry called once ($N0->$N1): ${R:-<no reply>}"
@@ -325,7 +326,7 @@ if [ "$ok" = 1 ]; then
     "$HERE/run-allocator.sh" serve > "$WORK/serve-lez-hex.json" || al_die "serve refresh (lez hex allowlist) failed"
     N0=$(stub_calls)
     IDC=$(rand_commitment)
-    R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" lez-allowlist allowlist_sign_module)" a12d) || R=""
+    R=$(al_request "$CLIENT" "$(req_provider_json "$IDC" lez-allowlist rln_sign_module)" a12d) || R=""
     N1=$(stub_calls)
     ok=0; contains "$R" "register_member" && [ "$((N1 - N0))" = 1 ] && ok=1
     check "$ok" A12d "listed by hex: accepted, registry called once ($N0->$N1): ${R:-<no reply>}"
@@ -349,7 +350,7 @@ out = {
   "failures": int(e["FAILS"]),
   "peer_id_before_restart": e["P1"], "peer_id_after_restart": e["P2"],
   "gifter_multiaddr": e["GADDR"], "allowlisted_address": e["ADDR"],
-  "allowlist_sign_module_eth_id": e["SA"],
+  "rln_sign_module_eth_id": e["SA"],
   "requests": reqs,
   "bundles": {"libp2p": e["LL"], "gifter": e["GL"], "stub_lez_rln": e["SL"], "allowlist_auth": e["EL"], "allowlist_sign": e["ESL"]},
 }

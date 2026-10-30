@@ -6,7 +6,7 @@ blockchain node's HTTP API.
 
 ## What was proven
 
-A Logos module (`pow_claim_capture_module`, Rust, logos-module-builder) loaded
+A Logos module (`rln_sign_module`, Rust, logos-module-builder) loaded
 in the **same logoscore daemon** as an **unmodified** `blockchain_module`
 (built from its `master` 63c3b0a, node 0.3.0-rc.5) produced the `pow-claim`
 auth payload for the RLN gifter. It used only the in-process node's HTTP API:
@@ -44,7 +44,7 @@ still open (see "Not done").
 ## Layout
 
 ```
-rust/pow-claim-capture-module/      thin module glue (flake.nix, metadata.json, rust-lib/src/lib.rs)
+rust/rln-sign-module/      thin module glue (flake.nix, metadata.json, rust-lib/src/lib.rs)
   rust-lib/pow-claim-core/          producer logic: args, discover, ownership, payload, challenge, produce
     tests/producer.rs               synthetic-fixture tests
     tests/real_fixtures.rs          tests over recorded real-node fixtures
@@ -52,7 +52,7 @@ rust/pow-claim-capture-module/      thin module glue (flake.nix, metadata.json, 
 tools/pow-claim-poc/
   run.sh                            end to end: node -> mine -> claim -> LIB -> capture -> produce -> verify
   node-up.sh                        start/stop a single node inside logoscore (blockchain_module)
-  build-module.sh                   build a module .lgx (producer by default; round 2: `pow_claim_auth_module`)
+  build-module.sh                   build a module .lgx (producer by default; round 2: `rln_auth_module`)
   lib/logoscore.sh                  logoscore daemon helpers
   lib/node_config.py                standalone node config + deployment patches
   lib/nodeq.py                      small node HTTP query helper
@@ -115,7 +115,7 @@ Env knobs:
 Unit tests:
 
 ```sh
-cd rust/pow-claim-capture-module/rust-lib/pow-claim-core
+cd rust/rln-sign-module/rust-lib/pow-claim-core
 cargo test                       # default (strict-ownership)
 cargo test --no-default-features # loose ownership
 cargo test --manifest-path tools/pow-claim-poc/verify/Cargo.toml   # from repo root; golden test
@@ -195,7 +195,7 @@ Round 2 additions (verified against the artifacts/code of this round):
 
 ## Not done / next (round 1; superseded by "Round 2: Not done")
 
-- ~~Verifier module (`pow_claim_auth_module`) and gifter wiring~~ done in round 2 (validation only)
+- ~~Verifier module (`rln_auth_module`) and gifter wiring~~ done in round 2 (validation only)
 - Running via the Basecamp UI. Note: mining itself already has a UI — the
   `blockchain_ui` module (`logos-blockchain/logos-blockchain-ui`, Mining view
   since 2026-09-18) configures PoW, starts/stops mining and claims rewards
@@ -210,18 +210,18 @@ Round 2 additions (verified against the artifacts/code of this round):
 
 Two logoscore daemons on one host. The client asks the gifter for a membership
 over libp2p with `authType: "pow-claim"`; the gifter verifies the claim with
-`pow_claim_auth_module` against **its own follower node**. Run
+`rln_auth_module` against **its own follower node**. Run
 `runs/20261007-133525-gifter/summary.json`: all assertions pass, 143 s total.
 
 ```
 daemon A (runs/<ts>-gifter/a)                     daemon B (runs/<ts>-gifter/b)
   blockchain_module  node 1 (mining)                blockchain_module  node 2 (follower)
     HTTP :18080, UDP 13000 / blend 3400               HTTP :18081, UDP 13001 / blend 3401
-  pow_claim_capture_module  (producer)  <---HTTP--- (not used by B)
+  rln_sign_module  (producer)  <---HTTP--- (not used by B)
   libp2p_module  tcp/0                              libp2p_module  tcp/61871
   rln_gifter_module  (client: request) --libp2p-->  rln_gifter_module serve
                                                       authVerifiers: pow-claim ->
-                                                    pow_claim_auth_module (node_url :18081)
+                                                    rln_auth_module (node_url :18081)
                                                     liblogos_lez_rln_module  (STUB, see R2.4)
 node 2 syncs from node 1 (initial peer /ip4/127.0.0.1/udp/13000/quic-v1/p2p/<node1 id>)
 ```
@@ -239,7 +239,7 @@ Results (`summary.json`, `requests[]`; error strings are the client's reply):
 
 | Tag | Input | Reply (`error`) | Audit |
 |---|---|---|---|
-| pos-provider | `authProvider: pow_claim_capture_module` (A mints payload) | `register_member: reply parse: expected value at line 1 column 1` | accept |
+| pos-provider | `authProvider: rln_sign_module` (A mints payload) | `register_member: reply parse: expected value at line 1 column 1` | accept |
 | pos-replay | same payload via `authPayload` | same register error | accept |
 | pos-node1-down | same payload, node 1 stopped | same register error | accept (node :18081) |
 | neg-sig | one signature byte flipped | `zkSign signature invalid (proof does not verify)` | reject |
@@ -248,7 +248,7 @@ Results (`summary.json`, `requests[]`; error strings are the client's reply):
 | neg-trunc | payload minus 1 byte | `payload: payload length 233 != 234 for flags 0x00` | reject |
 | neg-authtype | `authType: "pow-claim-v0"` | `unsupported authentication_type: 'pow-claim-v0'` | none (never reaches the verifier) |
 | neg-rate | payload `rate_max` 50, request rate 100 | `requested rate 100 exceeds payload rate_max 50` | reject |
-| pos-dead-node | verifier re-pointed at stopped node 1 (:18080) | `auth verifier pow_claim_auth_module: node unreachable or failing: ... Connection refused` | error |
+| pos-dead-node | verifier re-pointed at stopped node 1 (:18080) | `auth verifier rln_auth_module: node unreachable or failing: ... Connection refused` | error |
 
 Audit totals: accept 3, reject 5, error 1; `stub_inbound_calls` 3. The three
 accepts are all `node=:18081`, path `spent_to` (path B), about 4 ms each
@@ -280,8 +280,8 @@ prerequisites (logoscore in `runs/logos`, blockchain_module in `runs/bm-lgx`) ap
 tools/pow-claim-poc/build-gifter-artifacts.sh [--rebuild-libp2p]
 
 # verifier module .lgx (re-syncs rust-lib/pow-claim-core from the capture module first)
-tools/pow-claim-poc/build-module.sh pow_claim_auth_module | tail -1
-tools/pow-claim-poc/build-module.sh pow_claim_auth_module --generate   # refresh scaffold; see caveat below
+tools/pow-claim-poc/build-module.sh rln_auth_module | tail -1
+tools/pow-claim-poc/build-module.sh rln_auth_module --generate   # refresh scaffold; see caveat below
 
 # chainless smoke: two daemons, no nodes -> runs/gifter-smoke.json
 tools/pow-claim-poc/gifter-smoke.sh
@@ -324,9 +324,9 @@ Ports to keep free: TCP 18080, 18081, 61871; UDP 13000, 13001, 3400, 3401.
 Unit tests for the verifier module:
 
 ```sh
-cd rust/pow-claim-auth-module/rust-lib/pow-claim-core     && cargo test   # synced copy of the capture core: 30
-cd rust/pow-claim-auth-module/rust-lib/pow-claim-verifier && cargo test   # 43 (tests/real.rs, tests/synthetic.rs)
-cd rust/pow-claim-auth-module/rust-lib                    && cargo test   # glue: 5
+cd rust/rln-auth-module/rust-lib/pow-claim-core     && cargo test   # synced copy of the capture core: 30
+cd rust/rln-auth-module/rust-lib/pow-claim-verifier && cargo test   # 43 (tests/real.rs, tests/synthetic.rs)
+cd rust/rln-auth-module/rust-lib                    && cargo test   # glue: 5
 ```
 
 ## R2.3 Node 2 (follower) findings
@@ -381,9 +381,9 @@ From `runs/node2-probe.json` (two successful bring-ups; WP-B):
   need an argfile.
 - Disk: `/nix` was near full, so run dirs' `modules/` copies are deleted on teardown.
 
-## R2.5 Verifier module `pow_claim_auth_module`
+## R2.5 Verifier module `rln_auth_module`
 
-Layout: `rust/pow-claim-auth-module/` — glue `rust-lib/src/lib.rs`
+Layout: `rust/rln-auth-module/` — glue `rust-lib/src/lib.rs`
 (`PowClaimVector`, `auth_type "pow-claim"`, `dispatch_verify`), `rust-lib/pow-claim-core/`
 (verbatim copy of the capture core; never hand-edit, `build-module.sh` re-syncs it),
 `rust-lib/pow-claim-verifier/src/{lib,config,sig,ticket,chain,audit}.rs` (own

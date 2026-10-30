@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run.sh — PoW-claim PoC end to end on one fresh node:
 #   node (logoscore + blockchain_module) -> mine -> claim -> settle (LIB) -> capture fixtures
-#   -> pow_claim_capture_module.produce_auth -> pow-claim-verify (+ negative check).
+#   -> rln_sign_module.produce_auth -> pow-claim-verify (+ negative check).
 #
 # Env: POC_RUN_DIR, POC_HTTP_PORT (18080), POC_K, POC_AUDIENCE (poc), POC_RATE_MAX (100),
 #      POC_ALLOW_UNFINAL (0), LOGOSCORE, BM_LGX, PCM_LGX (skip module build if set),
@@ -65,7 +65,7 @@ fi
 [ -f "${BM_LGX:-}" ] || fail "no blockchain_module .lgx (BM_LGX or runs/bm-lgx/*.lgx)"
 export BM_LGX
 if [ -z "${PCM_LGX:-}" ]; then
-    poc_say "building pow_claim_capture_module (build-module.sh)"
+    poc_say "building rln_sign_module (build-module.sh)"
     PCM_LGX=$("$POC_DIR/build-module.sh" | tail -1) || {
         poc_say "build-module.sh failed; retrying once"
         PCM_LGX=$("$POC_DIR/build-module.sh" | tail -1)
@@ -163,7 +163,7 @@ fi
 
 # ---------------------------------------------------------------- 7. produce
 step produce
-lc_load pow_claim_capture_module
+lc_load rln_sign_module
 IDC=$(openssl rand -hex 32)
 UNF=false; [ "$POC_ALLOW_UNFINAL" = 1 ] && UNF=true
 ARGS_OBJ="{\"node_url\":\"$URL\",\"audience\":\"$POC_AUDIENCE\",\"rate_max\":$POC_RATE_MAX,\"allow_unfinal\":$UNF}"
@@ -173,7 +173,7 @@ REQ2=$(printf '%s' "$REQ1" | python3 -I -c 'import json,sys; d=json.load(sys.std
 produce() {
     local tag="$1" req="$2" env res
     printf '%s\n' "$req" > "$RUN/produce/$tag.request.json"
-    env=$(CALL_TIMEOUT=180 lc_call pow_claim_capture_module produce_auth "$req" || true)
+    env=$(CALL_TIMEOUT=180 lc_call rln_sign_module produce_auth "$req" || true)
     printf '%s\n' "$env" > "$RUN/produce/$tag.envelope.json"
     res=$(printf '%s' "$env" | jres)
     printf '%s\n' "$res" > "$RUN/produce/$tag.response.json"

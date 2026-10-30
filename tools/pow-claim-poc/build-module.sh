@@ -2,7 +2,7 @@
 # Build a pow-claim module .lgx from an rsync-staged copy (the flake only
 # sees git-tracked files; these modules are untracked, so never build in place).
 #   build-module.sh [MODULE] [--generate]
-#     MODULE = pow_claim_capture_module (default) | pow_claim_auth_module
+#     MODULE = rln_sign_module (default) | rln_auth_module
 #   build-module.sh             -> prints the capture module's .lgx path
 #   build-module.sh --generate  -> also refreshes rust-lib/generated/provider_gen.rs
 #                                  from the builder's generated scaffold
@@ -12,19 +12,19 @@ export PATH="$PATH:/nix/var/nix/profiles/default/bin"
 here="$(cd "$(dirname "$0")" && pwd)"
 rust="$(cd "$here/../../rust" && pwd)"
 
-module="pow_claim_capture_module"
+module="rln_sign_module"
 generate=0
 for a in "$@"; do
   case "$a" in
     --generate) generate=1 ;;
-    pow_claim_capture_module|pow_claim_auth_module) module="$a" ;;
-    *) echo "usage: $0 [pow_claim_capture_module|pow_claim_auth_module] [--generate]" >&2; exit 2 ;;
+    rln_sign_module|rln_auth_module) module="$a" ;;
+    *) echo "usage: $0 [rln_sign_module|rln_auth_module] [--generate]" >&2; exit 2 ;;
   esac
 done
 
 case "$module" in
-  pow_claim_capture_module) mod="$rust/pow-claim-capture-module"; staged="$here/runs/src-pcm" ;;
-  pow_claim_auth_module) mod="$rust/pow-claim-auth-module"; staged="$here/runs/src-pca" ;;
+  rln_sign_module) mod="$rust/rln-sign-module"; staged="$here/runs/src-pcm" ;;
+  rln_auth_module) mod="$rust/rln-auth-module"; staged="$here/runs/src-pca" ;;
 esac
 mkdir -p "$staged"
 

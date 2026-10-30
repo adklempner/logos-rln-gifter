@@ -11,9 +11,9 @@ a trusted CA; `KEYCARD_TRUSTED_CAS`) and **eth-allowlist** (addresses from
 `allowlist.txt`, re-served on edit), **logos-allowlist** (a tester's
 logos-blockchain node key, `allowlist-logos.txt`) and **lez-allowlist** (a LEZ
 account id, `allowlist-lez.txt`). The three allowlist vectors are verified by
-one module, `allowlist_auth_module` (bundle `allowlist-auth-module.lgx`), and
-produced on the tester side by one module, `allowlist_sign_module`
-(`allowlist-sign-module.lgx`).
+one module, `rln_auth_module` (bundle `rln-auth-module.lgx`), and
+produced on the tester side by one module, `rln_sign_module`
+(`rln-sign-module.lgx`).
 
 Written for a macOS Intel host whose node runs through
 `logos-blockchain/deployment/compose.run.yml` (API published on `18080/tcp`).
@@ -52,10 +52,10 @@ first-contact path for testers anyway.
 
 A copy of this repository (`logos-rln-gifter`, branch `feat/eth-sign-module`
 or later) on the machine, for the module sources and these files. The
-pow-claim modules (`rust/pow-claim-auth-module`, `rust/pow-claim-capture-module`)
+pow-claim modules (`rust/rln-auth-module`, `rust/rln-sign-module`)
 are NOT on that branch; they are on `feat/pow-claim-auth-vector` (stacked on
 it). Check that branch out to build them; `build-bundles.sh` skips them when
-absent, and an allocator without `pow-claim-auth-module.lgx` cannot serve
+absent, and an allocator without `rln-auth-module.lgx` cannot serve
 pow-claim.
 
 ## 1. Build the portable bundles (~10 min the first time)
@@ -63,10 +63,7 @@ pow-claim.
 ```sh
 cd tools/allocator/docker
 ./build-bundles.sh
-ls bundles/      # rln-gifter-module.lgx keycard-auth-module.lgx pow-claim-auth-module.lgx
-                 # allowlist-auth-module.lgx
-                 # allowlist-sign-module.lgx pow-claim-capture-module.lgx  (the last two are for testers)
-                 # the pow-claim-* bundles exist only with feat/pow-claim-auth-vector checked out
+ls bundles/      # rln-gifter-module.lgx rln-auth-module.lgx rln-sign-module.lgx
 ```
 
 The script prints each bundle's variants; they must read `linux-amd64` (Intel)
@@ -102,7 +99,7 @@ docker compose exec allocator cat /var/lib/allocator/allocator.json
   "alt_multiaddrs": ["/ip4/192.168.1.10/tcp/9000"],
   "registry_id": "logos:testnet:fd322d32…b971",
   "payer": "<64 hex — fund this>",
-  "auth_types": ["pow-claim", "keycard-attestation", "eth-allowlist"],
+  "auth_types": ["logos-pow-claim", "keycard-attestation", "eth-allowlist"],
   "served": true, "funded": false
 }
 ```
@@ -140,7 +137,7 @@ pipeline work up to the chain.
 ## 5. Add testers
 
 - **eth-allowlist**: a tester sends you the `id` (an address) their
-  `allowlist_sign_module` reports for
+  `rln_sign_module` reports for
   `identity '{"auth_type":"eth-allowlist"}'` (testers doc recipe A); append it to `config/allowlist.txt` and save. The entrypoint re-serves
   within `HEALTH_EVERY_S` (30 s): `docker compose logs --tail 5 allocator`
   shows `re-serving`. Each address yields one membership. The eth signature
@@ -148,7 +145,7 @@ pipeline work up to the chain.
   allocator, so a leaked payload can be spent at any allocator that
   allowlists the address, at any rate up to that allocator's
   `MAX_RATE_LIMIT`.
-- **logos-allowlist**: the tester runs `allowlist_sign_module.identity` with
+- **logos-allowlist**: the tester runs `rln_sign_module.identity` with
   `{"auth_type":"logos-allowlist","args":{"node_url":…}}` against their own node (testers doc recipe D) and sends you the 64-hex key; append it
   to `config/allowlist-logos.txt`. Same re-serve; one membership per key. A
   key that is not a canonical little-endian field element (usually a
@@ -156,7 +153,7 @@ pipeline work up to the chain.
   `auth_args.audience` must equal your `LOGOS_AUDIENCE` (both empty by
   default) and their signed `rate_max` (default 100) caps the rate they can
   request.
-- **lez-allowlist**: the tester runs `allowlist_sign_module.identity` with
+- **lez-allowlist**: the tester runs `rln_sign_module.identity` with
   `{"auth_type":"lez-allowlist"}` (recipe E) and sends `id_base58` (or the hex
   `id`); append it to `config/allowlist-lez.txt`. The entrypoint decodes
   base58 itself and passes lowercase hex to the verifier; an id that does not
@@ -177,9 +174,9 @@ give them that file, `allocator.json`, and the producer bundles from
 tester needs darwin builds from you, and `keycard-capture-module` is not
 built by `build-bundles.sh`: see §8.1).
 
-A tester who used the earlier `eth_sign_module` keeps their allowlisted
+A tester who used the earlier `rln_sign_module` keeps their allowlisted
 address only by importing that key into the new module:
-`logosctl call allowlist_sign_module import_key '{"auth_type":"eth-allowlist","private_key":"0x…"}'`
+`logosctl call rln_sign_module import_key '{"auth_type":"eth-allowlist","private_key":"0x…"}'`
 (add `"force":true` when the new module already minted a different key; the
 old module's key lives in its own persistence directory, which the new
 module does not read). Otherwise allowlist the new `id` they report.
@@ -204,7 +201,7 @@ volume (key, wallet, nullifiers) is untouched.
 
 ## 7. The follower node for pow-claim (`node/`)
 
-The verifier (`pow_claim_auth_module`) answers four reads per request from
+The verifier (`rln_auth_module`) answers four reads per request from
 the node at `POW_NODE_URL`: is the claim block final on this node, is it in
 the immutable index, what does it contain. The allocator must therefore see
 a node on the chain the testers mine. `node/` runs one in Docker, a
@@ -276,7 +273,7 @@ Verified runs: see the Verification log.
 
 ## 8.1 keycard-attestation (Status Keycard)
 
-The verifier `keycard_auth_module` (bundle `keycard-auth-module.lgx`, built by
+The verifier `rln_auth_module` (bundle `rln-auth-module.lgx`, built by
 `build-bundles.sh` by default) needs no PC/SC and no card on the allocator
 host. `KEYCARD_TRUSTED_CAS` is a comma-separated list of 33-byte compressed
 secp256k1 CA public keys (hex): empty = the Status production CA
@@ -498,8 +495,8 @@ The allocator paid ~74M per grant from the zone's genesis-funded payer.
 
 ### 2026-10-18 — consolidated allowlist modules
 
-`allowlist_auth_module` (one verifier for `eth-allowlist`, `logos-allowlist`,
-`lez-allowlist`) and `allowlist_sign_module` (one producer: `produce_auth`,
+`rln_auth_module` (one verifier for `eth-allowlist`, `logos-allowlist`,
+`lez-allowlist`) and `rln_sign_module` (one producer: `produce_auth`,
 `identity`, `import_key`) replaced the six separate modules. Rebuilt image,
 `verify-local.sh` D1–D10 ALL PASS on the local zone (eth grant, logos
 through the follower node answered `credential already used` for the key

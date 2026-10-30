@@ -70,7 +70,7 @@ print(m.group(0) if m else "")')
 }
 
 # Usage: cf_produce <run_a> <idc> <audience> <rate_max> <tag> [extra_args_json]
-# produce_auth on pow_claim_capture_module (node_url :18080, allow_unfinal false);
+# produce_auth on rln_sign_module (node_url :18080, allow_unfinal false);
 # saves <run_a>/produce/<tag>.json (+ .request/.envelope); echoes payload_hex (468 hex).
 cf_produce() {
     local run="$1" idc="$2" aud="$3" rm="$4" tag="$5" extra="${6:-}" req env res
@@ -81,10 +81,10 @@ idc, aud, rm, extra = sys.argv[1:5]
 args = {"node_url": "http://127.0.0.1:18080", "audience": aud, "rate_max": int(rm), "allow_unfinal": False}
 if extra:
     args.update(json.loads(extra))
-print(json.dumps({"auth_type": "pow-claim", "id_commitment_hex": idc, "args": args}, separators=(",", ":")))' \
+print(json.dumps({"auth_type": "logos-pow-claim", "id_commitment_hex": idc, "args": args}, separators=(",", ":")))' \
         "$idc" "$aud" "$rm" "$extra")
     printf '%s\n' "$req" > "$run/produce/$tag.request.json"
-    env=$(POC_RUN_DIR="$run" CALL_TIMEOUT=180 lc_call pow_claim_capture_module produce_auth "$req" || true)
+    env=$(POC_RUN_DIR="$run" CALL_TIMEOUT=180 lc_call rln_sign_module produce_auth "$req" || true)
     printf '%s\n' "$env" > "$run/produce/$tag.envelope.json"
     res=$(printf '%s' "$env" | jres)
     printf '%s\n' "$res" > "$run/produce/$tag.json"

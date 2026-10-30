@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # Mint synthetic Keycard IDENTIFY_CARD attestations for CI / e2e testing.
 # Pure python, no external deps (same style as the mix e2e's keys.py), so it
-# runs on the host or in any container. Mirrors rln-zone-sequencer's
-# mint_attestation test harness: the throwaway CA recoverably signs
-# SHA256(ident_pub); the "card" DER-signs the raw commitment-bound challenge
-# SHA256("logos/rln/keycard-attest/1" || id_commitment); both wrapped in the
-# A0 { 8A cert, 30 der } TLV that keycard_attest.nim / the gifter verifies.
+# runs on the host or in any container. The throwaway CA recoverably signs
+# SHA256(ident_pub); the "card" DER-signs the raw binding digest
+# SHA256("logos/rln/<auth_type>/2" || id_commitment || rate_max u64 LE ||
+# u8 len(audience) || audience) (rln_auth_vector::binding_digest); both are
+# wrapped in the A0 { 8A cert, 30 der } TLV the gifter's keycard scheme
+# verifies, and the TLV is framed as a payload (02 || tlv || rate_max LE).
 #
-#   mint_attest.py mint <ca_priv_hex> <card_priv_hex> <id_commitment_hex>
-#       -> JSON {tlv, challenge, ca_pub, ident_pub, nullifier}
+#   mint_attest.py mint <ca_priv_hex> <card_priv_hex> <id_commitment_hex> [rate_max] [audience] [auth_type]
+#       -> JSON {tlv, payload, challenge, ca_pub, ident_pub, nullifier}
 #   mint_attest.py pub <priv_hex>      -> compressed secp256k1 pubkey hex
 #   mint_attest.py selftest            -> verify keccak + curve against fixtures
 #
@@ -157,7 +158,7 @@ def keccak256(data: bytes) -> bytes:
 
 
 # ---- attestation ----
-DOMAIN = b"logos/rln/keycard-attest/1"
+PAYLOAD_VERSION = 2
 
 
 def tlv(tag: int, value: bytes) -> bytes:
@@ -168,21 +169,41 @@ def tlv(tag: int, value: bytes) -> bytes:
     return bytes([tag, 0x82, len(value) >> 8, len(value) & 0xFF]) + value
 
 
-def bound_challenge(id_commitment: bytes) -> bytes:
-    return hashlib.sha256(DOMAIN + id_commitment).digest()
+def bound_challenge(
+    id_commitment: bytes, rate_max: int = 100, audience: bytes = b"", auth_type: str = "keycard-attestation"
+) -> bytes:
+    """rln_auth_vector::binding_digest for a composed auth_type."""
+    domain = ("logos/rln/%s/2" % auth_type).encode()
+    return hashlib.sha256(
+        domain + id_commitment + rate_max.to_bytes(8, "little") + bytes([len(audience)]) + audience
+    ).digest()
 
 
-def mint(ca_priv: int, card_priv: int, id_commitment: bytes) -> dict:
+def frame(scheme_part: bytes, rate_max: int = 100) -> bytes:
+    """rln_auth_vector::frame with no authoriser evidence."""
+    return bytes([PAYLOAD_VERSION]) + scheme_part + rate_max.to_bytes(8, "little")
+
+
+def mint(
+    ca_priv: int,
+    card_priv: int,
+    id_commitment: bytes,
+    rate_max: int = 100,
+    audience: bytes = b"",
+    auth_type: str = "keycard-attestation",
+) -> dict:
     ident_pub = compressed_pub(card_priv)
     prehash = hashlib.sha256(ident_pub).digest()
     r, s, recid = sign_prehash(ca_priv, prehash)
     cert = ident_pub + r.to_bytes(32, "big") + s.to_bytes(32, "big") + bytes([recid])
 
-    challenge = bound_challenge(id_commitment)
+    challenge = bound_challenge(id_commitment, rate_max, audience, auth_type)
     cr, cs, _ = sign_prehash(card_priv, challenge)
     template = tlv(0x8A, cert) + der_encode(cr, cs)
+    attestation = tlv(0xA0, template)
     return {
-        "tlv": tlv(0xA0, template).hex(),
+        "tlv": attestation.hex(),
+        "payload": frame(attestation, rate_max).hex(),
         "challenge": challenge.hex(),
         "ca_pub": compressed_pub(ca_priv).hex(),
         "ident_pub": ident_pub.hex(),
@@ -208,9 +229,12 @@ def main() -> None:
         selftest()
     elif len(sys.argv) == 3 and sys.argv[1] == "pub":
         print(compressed_pub(int(sys.argv[2], 16)).hex())
-    elif len(sys.argv) == 5 and sys.argv[1] == "mint":
+    elif 5 <= len(sys.argv) <= 8 and sys.argv[1] == "mint":
+        rate_max = int(sys.argv[5]) if len(sys.argv) > 5 else 100
+        audience = sys.argv[6].encode() if len(sys.argv) > 6 else b""
+        auth_type = sys.argv[7] if len(sys.argv) > 7 else "keycard-attestation"
         out = mint(
-            int(sys.argv[2], 16), int(sys.argv[3], 16), bytes.fromhex(sys.argv[4])
+            int(sys.argv[2], 16), int(sys.argv[3], 16), bytes.fromhex(sys.argv[4]), rate_max, audience, auth_type
         )
         print(json.dumps(out))
     else:
