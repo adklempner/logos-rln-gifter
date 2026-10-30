@@ -293,7 +293,7 @@ fn handle_request(buf: &[u8]) -> RlnGifterResponse {
                     &format!("auth verifier {module}: malformed nullifier"),
                 );
             }
-            let nul = format!("{auth_type}:{nul}");
+            let nul = rln_auth_vector::namespaced_nullifier(&auth_type, &nul);
             let mut g = lock(&CONSUMED_NULLIFIERS);
             let set = g.get_or_insert_with(HashSet::new);
             if set.contains(&nul) {
