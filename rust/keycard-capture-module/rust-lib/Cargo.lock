@@ -660,7 +660,7 @@ dependencies = [
 name = "keycard_capture_module"
 version = "0.3.0"
 dependencies = [
- "keycard_client 0.1.0 (git+https://github.com/logos-co/logos-rln-gifter?tag=keycard-crates-v0.2.0)",
+ "keycard_client",
  "logos-rust-sdk",
  "rln_auth_vector",
  "rln_auth_vectors",
@@ -671,21 +671,6 @@ dependencies = [
 name = "keycard_client"
 version = "0.1.0"
 source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.2.0#bdaed4fd0b776e775bce023f77200f94052e1140"
-dependencies = [
- "aes",
- "hex",
- "k256",
- "pbkdf2",
- "pcsc",
- "rand",
- "sha2",
- "unicode-normalization",
-]
-
-[[package]]
-name = "keycard_client"
-version = "0.1.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=keycard-crates-v0.2.0#bdaed4fd0b776e775bce023f77200f94052e1140"
 dependencies = [
  "aes",
  "hex",
@@ -949,7 +934,7 @@ dependencies = [
  "hex",
  "k256",
  "keycard_attest",
- "keycard_client 0.1.0 (git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.2.0)",
+ "keycard_client",
  "pow-claim",
  "rand_core",
  "rln_auth_vector",

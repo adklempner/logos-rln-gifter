@@ -12,7 +12,7 @@
 // per run. The logos key never leaves the node's KMS.
 // FEATURE: RLN gifter auth vectors (produce)
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use rln_auth_vector::{dispatch_produce, AuthType, ProduceRegistry};
 use rln_auth_vectors::claimant::{AllowlistClaimant, AttestationClaimant, PowClaimant};
@@ -170,13 +170,13 @@ fn persisted_key(persistence_path: &str, kind: Kind) -> Option<Result<[u8; 32], 
 /// per kind. Shared by the module and its signers.
 #[derive(Default)]
 struct KeyStore {
-    persistence_path: Mutex<String>,
-    eth: Mutex<Option<[u8; 32]>>,
-    lez: Mutex<Option<[u8; 32]>>,
+    persistence_path: std::sync::Mutex<String>,
+    eth: std::sync::Mutex<Option<[u8; 32]>>,
+    lez: std::sync::Mutex<Option<[u8; 32]>>,
 }
 
 impl KeyStore {
-    fn slot(&self, kind: Kind) -> &Mutex<Option<[u8; 32]>> {
+    fn slot(&self, kind: Kind) -> &std::sync::Mutex<Option<[u8; 32]>> {
         match kind {
             Kind::Eth => &self.eth,
             Kind::Lez => &self.lez,
@@ -419,11 +419,11 @@ mod tests {
 
     struct FakeNode {
         targets: Vec<&'static str>,
-        signed: Mutex<usize>,
+        signed: std::sync::Mutex<usize>,
     }
     impl FakeNode {
         fn new(targets: Vec<&'static str>) -> Arc<FakeNode> {
-            Arc::new(FakeNode { targets, signed: Mutex::new(0) })
+            Arc::new(FakeNode { targets, signed: std::sync::Mutex::new(0) })
         }
     }
     impl ZkNode for FakeNode {
