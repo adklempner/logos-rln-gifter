@@ -11,7 +11,7 @@ use std::any::Any;
 use keycard_attest::attest::{parse_attestation, tlv_len, verify_challenge};
 use rln_auth_vector::{strip_0x, Identity};
 #[cfg(feature = "verify")]
-use rln_auth_vector::{Binding, Check, Decoded, Outcome, Scheme};
+use rln_auth_vector::{Binding, Check, Decoded, Outcome, Scheme, Transport};
 
 pub const NAME: &str = "keycard";
 
@@ -68,7 +68,7 @@ impl Scheme for Keycard {
             rest,
         })
     }
-    fn verify(&self, _cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>) -> Check<Box<dyn Identity>> {
+    fn verify(&self, _cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>, _t: &Transport<'_>) -> Check<Box<dyn Identity>> {
         let att = match parse_attestation(d.part) {
             Ok(a) => a,
             Err(e) => return Ok(Outcome::Reject(format!("attestation parse failed: {e}"))),
@@ -110,9 +110,9 @@ pub(crate) mod tests {
         assert_eq!(d.claimed.as_ref().unwrap().canonical(), IDENT_PUB);
         let b = Binding { id_commitment: [0; 32], rate_max: 1, audience: String::new() };
         let challenge: [u8; 32] = hex::decode(GOLDEN_CHALLENGE).unwrap().try_into().unwrap();
-        let Outcome::Ok(id) = Keycard.verify(&(), &b, &challenge, &d).unwrap() else { panic!() };
+        let Outcome::Ok(id) = Keycard.verify(&(), &b, &challenge, &d, &Transport::default()).unwrap() else { panic!() };
         assert_eq!(id.canonical(), IDENT_PUB);
-        let Outcome::Reject(r) = Keycard.verify(&(), &b, &[9; 32], &d).unwrap() else { panic!() };
+        let Outcome::Reject(r) = Keycard.verify(&(), &b, &[9; 32], &d, &Transport::default()).unwrap() else { panic!() };
         assert!(r.starts_with("attestation verification failed"), "{r}");
         assert!(matches!(Keycard.decode(&tlv[..40]), Outcome::Reject(r) if r.starts_with("attestation parse failed")));
     }

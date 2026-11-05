@@ -12,7 +12,7 @@ use k256::schnorr::signature::hazmat::PrehashVerifier;
 use k256::schnorr::{Signature, VerifyingKey};
 use rln_auth_vector::{strip_0x, Identity};
 #[cfg(feature = "verify")]
-use rln_auth_vector::{reason, Binding, Check, Decoded, Outcome, Scheme};
+use rln_auth_vector::{reason, Binding, Check, Decoded, Outcome, Scheme, Transport};
 use sha2::{Digest, Sha256};
 
 pub const NAME: &str = "lez";
@@ -80,7 +80,7 @@ impl Scheme for Lez {
         let xonly: [u8; 32] = part[..32].try_into().expect("32 bytes");
         Outcome::Ok(Decoded { claimed: Some(Box::new(LezAccount(hex::encode(account_id(&xonly))))), part, rest })
     }
-    fn verify(&self, _cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>) -> Check<Box<dyn Identity>> {
+    fn verify(&self, _cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>, _t: &Transport<'_>) -> Check<Box<dyn Identity>> {
         let vk = match VerifyingKey::from_bytes(&d.part[..32]) {
             Ok(k) => k,
             Err(e) => return Ok(Outcome::Reject(format!("public key: {e}"))),

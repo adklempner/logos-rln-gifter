@@ -6,11 +6,12 @@ use rln_auth_vector::{
     binding_digest, dispatch_produce, dispatch_verify, frame, reason, AuthType, Authoriser, Binding, Identity,
     Outcome, ProduceRegistry, VerifyRegistry,
 };
-use rln_auth_vectors::authoriser::{Allowlist, Attestation, PowClaim};
-use rln_auth_vectors::claimant::{AllowlistClaimant, AttestationClaimant, PowClaimant};
+use rln_auth_vectors::authoriser::{Allowlist, Any, Attestation, PowClaim};
+use rln_auth_vectors::claimant::{AllowlistClaimant, AnyClaimant, AttestationClaimant, PowClaimant};
 use rln_auth_vectors::scheme::keycard::KeycardIdentity;
-use rln_auth_vectors::scheme::{Eth, Keycard, Lez, Logos};
-use rln_auth_vectors::signer::{EthSigner, LezSigner, LogosSigner, StaticKey};
+use rln_auth_vectors::scheme::peer::parse_peer_id;
+use rln_auth_vectors::scheme::{Eth, Keycard, Lez, Logos, Peer};
+use rln_auth_vectors::signer::{EthSigner, LezSigner, LogosSigner, PeerSigner, StaticKey};
 use serde_json::{json, Value};
 use zksign_light::ZkNode;
 
@@ -25,6 +26,8 @@ const K: &str = "e3635f207984ae779cf76b5f20714b514373f61ff96260879fe0a6d71f2dce0
 const GOLDEN_TLV: &str = "a081ab8a620365c18485fe7018e11cb992011426803aa8e843c63aab9657aed7d3ee4b85a62a11188ada267db3312a84e1be27c01c736a89da7a1fe4f7e90ce297e74f00008e2bfdb06058374abfc1c026386d16ead7bbc19bc0645d2e7acf7b953169bbc1ac0130450220364c5ca937b7ca42861978f086d206cc569ef0bb2ea4c7de08929c2fcca7434d022100c87699ce4f977e6a7a4800343db9b6842b91ca873e56dfe3327d19a2d01af14e";
 const TEST_CA: &str = "02fc929321aa94fea085b166994aa66590116252cf0235a03accaa2c8ab4595de5";
 const IDENT_PUB: &str = "0365c18485fe7018e11cb992011426803aa8e843c63aab9657aed7d3ee4b85a62a";
+const PEER_B58: &str = "16Uiu2HAkyiMKmjcAj4FS5jot1jMZB73mnY3wJnSTKZmTBhrFJEaT";
+const OTHER_PEER_B58: &str = "12D3KooWA1yXQfKD3c8QznGkpf1ZepPH1FQKwAwMxbTh1feQsapZ";
 
 struct FakeZk;
 impl ZkNode for FakeZk {
@@ -48,7 +51,9 @@ fn verifiers() -> VerifyRegistry {
         .scheme(Lez)
         .scheme(Logos)
         .scheme(Keycard)
+        .scheme(Peer)
         .authoriser(Allowlist)
+        .authoriser(Any)
         .authoriser(Attestation)
         .authoriser(PowClaim)
 }
@@ -58,7 +63,9 @@ fn producers() -> ProduceRegistry {
         .signer(EthSigner(Box::new(StaticKey(PK42))))
         .signer(LezSigner(Box::new(StaticKey(sk3()))))
         .signer(LogosSigner { node: Some(Box::new(FakeZk)) })
+        .signer(PeerSigner)
         .claimant(AllowlistClaimant)
+        .claimant(AnyClaimant)
         .claimant(AttestationClaimant)
         .claimant(PowClaimant::http())
 }
@@ -69,10 +76,17 @@ fn produce(auth_type: &str, args: Value) -> Value {
 }
 
 fn verify(auth_type: &str, payload_hex: &str, rate: u64, config: Value) -> Value {
-    let req = json!({
+    verify_from(auth_type, payload_hex, rate, config, None)
+}
+
+fn verify_from(auth_type: &str, payload_hex: &str, rate: u64, config: Value, peer_id: Option<&str>) -> Value {
+    let mut req = json!({
         "auth_type": auth_type, "payload_hex": payload_hex,
         "id_commitment_hex": IDC, "rate": rate, "config": config
     });
+    if let Some(p) = peer_id {
+        req["peer_id"] = json!(p);
+    }
     serde_json::from_str(&dispatch_verify(&req.to_string(), &verifiers())).unwrap()
 }
 
@@ -81,11 +95,59 @@ fn reason_of(v: &Value) -> &str {
 }
 
 #[test]
-fn the_registries_compose_exactly_the_six_vectors() {
-    let want = ["eth-allowlist", "lez-allowlist", "logos-allowlist", "logos-pow-claim", "keycard-allowlist", "keycard-attestation"];
+fn the_registries_compose_exactly_the_twelve_vectors() {
+    let want = [
+        "eth-allowlist", "eth-any", "lez-allowlist", "lez-any", "logos-allowlist", "logos-any", "logos-pow-claim",
+        "keycard-allowlist", "keycard-any", "keycard-attestation", "peer-allowlist", "peer-any",
+    ];
     assert_eq!(verifiers().auth_types(), want);
     // The producers here lack the keycard signer (PC/SC), so no keycard-* types.
-    assert_eq!(producers().auth_types(), &want[..4]);
+    let produced: Vec<_> = want.iter().filter(|t| !t.starts_with("keycard-")).copied().collect();
+    assert_eq!(producers().auth_types(), produced);
+}
+
+#[test]
+fn peer_any_is_the_transports_identity_once_per_peer() {
+    // The produced payload is the bare frame: nothing signed, nothing bound.
+    let p = produce("peer-any", json!({ "rate_max": 100 }));
+    let payload = p["payload_hex"].as_str().unwrap_or_else(|| panic!("{p}"));
+    assert_eq!(payload, "026400000000000000");
+    let hexid = parse_peer_id(PEER_B58).unwrap();
+
+    let v = verify_from("peer-any", payload, 100, json!({}), Some(PEER_B58));
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["nullifier"], hexid);
+    // The same payload from another peer is that peer's claim, not a replay.
+    let v = verify_from("peer-any", payload, 100, json!({}), Some(OTHER_PEER_B58));
+    assert_eq!(v["nullifier"], parse_peer_id(OTHER_PEER_B58).unwrap());
+    // Without a transport peer id the host is misconfigured: the envelope.
+    let v = verify("peer-any", payload, 100, json!({}));
+    assert_eq!(v["error"], reason::TRANSPORT_PEER_UNKNOWN);
+    // The frame's rate_max still caps the settled rate.
+    let v = verify_from("peer-any", payload, 101, json!({}), Some(PEER_B58));
+    assert_eq!(reason_of(&v), "rate 101 exceeds the signed rate_max 100");
+    let v = verify_from("peer-any", "0200", 100, json!({}), Some(PEER_B58));
+    assert!(reason_of(&v).contains("too short"), "{v}");
+    // The payload identity of a signing scheme is still what `any` nullifies.
+    let p = produce("eth-any", json!({}));
+    let v = verify("eth-any", p["payload_hex"].as_str().unwrap(), 100, json!({ "audience": "" }));
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(v["nullifier"], ADDR42);
+}
+
+#[test]
+fn peer_allowlist_lists_peer_ids_in_either_spelling() {
+    let payload = "026400000000000000";
+    let hexid = parse_peer_id(PEER_B58).unwrap();
+    for entry in [PEER_B58.to_string(), hexid.to_uppercase()] {
+        let v = verify_from("peer-allowlist", payload, 100, json!({ "allowlist": [entry] }), Some(PEER_B58));
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(v["nullifier"], hexid);
+    }
+    let v = verify_from("peer-allowlist", payload, 100, json!({ "allowlist": [OTHER_PEER_B58] }), Some(PEER_B58));
+    assert_eq!(reason_of(&v), format!("peer not allowlisted: {hexid}"));
+    let v = verify_from("peer-allowlist", payload, 100, json!({ "allowlist": ["zz"] }), Some(PEER_B58));
+    assert!(v["error"].as_str().unwrap().contains("'zz'"), "{v}");
 }
 
 #[test]

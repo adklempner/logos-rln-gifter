@@ -40,6 +40,15 @@ pub fn downcast_identity<T: 'static>(id: &dyn Identity) -> Option<&T> {
     id.as_any().downcast_ref::<T>()
 }
 
+/// What the transport proved about the requester, independent of the
+/// payload: the libp2p peer id behind the secure channel the request arrived
+/// on (the gifter reads it from the accepted stream). A scheme that signs
+/// nothing takes its proven identity from here.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Transport<'a> {
+    pub peer_id: Option<&'a str>,
+}
+
 /// A scheme part split off the front of the payload body.
 pub struct Decoded<'a> {
     /// The identity the part names, when it carries one (a public key); the
@@ -73,8 +82,9 @@ pub trait Scheme: Send + Sync {
     fn decode<'a>(&self, body: &'a [u8]) -> Outcome<Decoded<'a>>;
     /// The identity the part's signature proves over `digest` (a scheme that
     /// signs something else, such as eth's EIP-191 message over the bare
-    /// commitment, derives it from `b` here).
-    fn verify(&self, cfg: &dyn Any, b: &Binding, digest: &[u8; 32], d: &Decoded<'_>) -> Check<Box<dyn Identity>>;
+    /// commitment, derives it from `b` here; one that signs nothing takes it
+    /// from `t`).
+    fn verify(&self, cfg: &dyn Any, b: &Binding, digest: &[u8; 32], d: &Decoded<'_>, t: &Transport<'_>) -> Check<Box<dyn Identity>>;
 }
 
 /// The produce half of a scheme: holds (or reaches) the key. `args` is the

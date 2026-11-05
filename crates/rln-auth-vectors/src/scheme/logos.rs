@@ -8,7 +8,7 @@ use std::any::Any;
 
 use rln_auth_vector::{norm_hex32, Identity};
 #[cfg(feature = "verify")]
-use rln_auth_vector::{Binding, Cfg, Check, Decoded, Outcome, Scheme};
+use rln_auth_vector::{Binding, Cfg, Check, Decoded, Outcome, Scheme, Transport};
 
 pub const NAME: &str = "logos";
 /// `K(32) ‖ zksig(128)`.
@@ -69,7 +69,7 @@ impl Scheme for Logos {
         let (part, rest) = body.split_at(PART_LEN);
         Outcome::Ok(Decoded { claimed: Some(Box::new(LogosKey(hex::encode(&part[..32])))), part, rest })
     }
-    fn verify(&self, cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>) -> Check<Box<dyn Identity>> {
+    fn verify(&self, cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>, _t: &Transport<'_>) -> Check<Box<dyn Identity>> {
         let vk = cfg
             .downcast_ref::<zksign_light::VkSource>()
             .ok_or("logos scheme: config is not a VkSource")?;

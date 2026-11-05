@@ -4,7 +4,7 @@ use crate::authtype::AuthType;
 use crate::binding::{binding_digest, Binding};
 use crate::frame::{frame, unframe};
 use crate::hex::strip_0x;
-use crate::pieces::Outcome;
+use crate::pieces::{Outcome, Transport};
 use crate::reason;
 use crate::registry::{ProduceRegistry, VerifyRegistry};
 use crate::types::{ProduceReply, ProduceRequest, Verdict, VerifyRequest};
@@ -52,7 +52,8 @@ pub fn verify_flow(r: &VerifyRegistry, req: &VerifyRequest) -> Result<Verdict, S
     };
 
     let digest = binding_digest(&t, &b, &auth.extra(ev.as_ref()));
-    let proven = reject_on!(scheme.verify(scfg.as_ref(), &b, &digest, &d)?);
+    let transport = Transport { peer_id: req.peer_id.as_deref() };
+    let proven = reject_on!(scheme.verify(scfg.as_ref(), &b, &digest, &d, &transport)?);
     if let Some(claimed) = &d.claimed {
         let (c, p) = (claimed.canonical(), proven.canonical());
         if c != p {
@@ -85,7 +86,7 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::*;
-    use crate::pieces::{Authoriser, Cfg, Check, Claimant, Decoded, Evidence, Identity, Scheme, Signer};
+    use crate::pieces::{Authoriser, Cfg, Check, Claimant, Decoded, Evidence, Identity, Scheme, Signer, Transport};
     use crate::registry::{dispatch_produce, dispatch_verify};
 
     struct ToyId(String);
@@ -113,7 +114,7 @@ mod tests {
             let (part, rest) = body.split_at(33);
             Outcome::Ok(Decoded { claimed: Some(Box::new(ToyId(hex::encode(&part[..32])))), part, rest })
         }
-        fn verify(&self, _cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>) -> Check<Box<dyn Identity>> {
+        fn verify(&self, _cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>, _t: &Transport<'_>) -> Check<Box<dyn Identity>> {
             if d.part[32] != digest[0] {
                 return Ok(Outcome::Reject(reason::SIG_FAILED.into()));
             }

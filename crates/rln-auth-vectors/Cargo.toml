@@ -1,8 +1,8 @@
 [package]
 name = "rln_auth_vectors"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "The RLN gifter's auth-vector pieces: the eth, lez, logos and keycard schemes and the allowlist, attestation and pow-claim authorisers, each with its produce half"
+description = "The RLN gifter's auth-vector pieces: the eth, lez, logos, keycard and peer schemes and the allowlist, any, attestation and pow-claim authorisers, each with its produce half"
 license = "MIT OR Apache-2.0"
 
 [features]

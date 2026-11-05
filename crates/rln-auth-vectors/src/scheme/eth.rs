@@ -9,7 +9,7 @@ use std::any::Any;
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 use rln_auth_vector::Identity;
 #[cfg(feature = "verify")]
-use rln_auth_vector::{reason, Binding, Check, Decoded, Outcome, Scheme};
+use rln_auth_vector::{reason, Binding, Check, Decoded, Outcome, Scheme, Transport};
 
 pub const NAME: &str = "eth";
 /// `r ‖ s ‖ recid`, recid 0/1 (27/28 accepted on verify).
@@ -106,7 +106,7 @@ impl Scheme for Eth {
         let (part, rest) = body.split_at(PART_LEN);
         Outcome::Ok(Decoded { claimed: None, part, rest })
     }
-    fn verify(&self, _cfg: &dyn Any, b: &Binding, _digest: &[u8; 32], d: &Decoded<'_>) -> Check<Box<dyn Identity>> {
+    fn verify(&self, _cfg: &dyn Any, b: &Binding, _digest: &[u8; 32], d: &Decoded<'_>, _t: &Transport<'_>) -> Check<Box<dyn Identity>> {
         Ok(match recover_signer(&b.id_commitment, d.part) {
             Ok(addr) => Outcome::Ok(Box::new(EthAddress(addr))),
             Err(e) => Outcome::Reject(reason::sig_failed(e)),

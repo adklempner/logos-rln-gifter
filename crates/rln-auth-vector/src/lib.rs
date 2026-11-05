@@ -43,7 +43,7 @@ pub use frame::{frame, unframe, PAYLOAD_VERSION};
 pub use hex::{hex32_bytes, norm_hex32, strip_0x};
 pub use pieces::{
     downcast_identity, Authoriser, Cfg, Check, Claimant, Decoded, Evidence, Identity, Outcome,
-    Scheme, Signer,
+    Scheme, Signer, Transport,
 };
 pub use registry::{dispatch_produce, dispatch_verify, ProduceRegistry, VerifyRegistry};
 pub use types::{

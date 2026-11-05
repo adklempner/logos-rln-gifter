@@ -5,6 +5,7 @@ pub mod eth;
 pub mod keycard;
 pub mod lez;
 pub mod logos;
+pub mod peer;
 
 use rln_auth_vector::{args_object, strip_0x};
 use serde_json::Value;
@@ -14,6 +15,7 @@ pub use eth::EthSigner;
 pub use keycard::KeycardSigner;
 pub use lez::{LezKey, LezSigner};
 pub use logos::{LogosSigner, NodeArgs};
+pub use peer::PeerSigner;
 
 /// Where a file-key signer (eth, lez) gets its 32-byte private key for a
 /// request: the module decides (its own persisted key, an imported one, …);

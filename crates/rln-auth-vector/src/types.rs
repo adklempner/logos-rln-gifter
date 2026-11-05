@@ -31,6 +31,9 @@ pub struct ProduceReply {
 /// configuration (an allowlist, trusted CAs, a node URL …), passed through
 /// verbatim from the gifter's `authVerifiers` entry on every call — verifiers
 /// stay stateless. `rate` is the rate the gifter settled on for this request.
+/// `peer_id` is the requester's libp2p peer id as the transport authenticated
+/// it (the gifter reads it from the accepted stream); schemes that sign
+/// nothing prove their identity from it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerifyRequest {
     pub auth_type: String,
@@ -40,6 +43,8 @@ pub struct VerifyRequest {
     pub rate: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_id: Option<String>,
 }
 
 /// `verify_auth` output. A refusal is `ok: false` + `reason` — still a
@@ -66,9 +71,10 @@ impl Verdict {
 }
 
 /// The key the gifter persists a spent credential under: one namespace per
-/// auth type, so two vectors with the same nullifier form never collide.
-pub fn namespaced_nullifier(auth_type: &str, nullifier: &str) -> String {
-    format!("{auth_type}:{nullifier}")
+/// registry and auth type, so a credential buys one membership per registry
+/// and two vectors with the same nullifier form never collide.
+pub fn namespaced_nullifier(registry: &str, auth_type: &str, nullifier: &str) -> String {
+    format!("{registry}:{auth_type}:{nullifier}")
 }
 
 pub(crate) fn error_reply(msg: &str) -> String {
@@ -117,9 +123,11 @@ mod tests {
             id_commitment_hex: "bb".into(),
             rate: 0,
             config: None,
+            peer_id: None,
         };
         let v = serde_json::to_value(&req).unwrap();
         assert!(v.get("config").is_none(), "unset config must be omitted");
+        assert!(v.get("peer_id").is_none(), "unset peer_id must be omitted");
         let back: VerifyRequest = serde_json::from_value(v).unwrap();
         assert_eq!(back.auth_type, "t-a");
 
@@ -132,7 +140,7 @@ mod tests {
     }
 
     #[test]
-    fn nullifiers_are_namespaced_by_auth_type() {
-        assert_eq!(namespaced_nullifier("eth-allowlist", "0xab"), "eth-allowlist:0xab");
+    fn nullifiers_are_namespaced_by_registry_and_auth_type() {
+        assert_eq!(namespaced_nullifier("cfg1", "eth-allowlist", "0xab"), "cfg1:eth-allowlist:0xab");
     }
 }

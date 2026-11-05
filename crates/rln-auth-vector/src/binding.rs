@@ -164,6 +164,7 @@ mod tests {
             id_commitment_hex: format!("0X{}", "ab".repeat(32)),
             rate: 1,
             config: None,
+            peer_id: None,
         };
         let Outcome::Ok(b) = Binding::for_verify(&req, 5, "aud") else { panic!() };
         assert_eq!((b.id_commitment, b.rate_max, b.audience.as_str()), ([0xab; 32], 5, "aud"));

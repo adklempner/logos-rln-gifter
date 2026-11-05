@@ -27,6 +27,24 @@ impl Claimant for AllowlistClaimant {
     }
 }
 
+/// `any` binds no evidence and composes with every scheme.
+pub struct AnyClaimant;
+
+impl Claimant for AnyClaimant {
+    fn authoriser(&self) -> &'static str {
+        "any"
+    }
+    fn accepts(&self, _scheme: &str) -> bool {
+        true
+    }
+    fn gather(&self, _b: &Binding, _args: Option<&Value>) -> Result<Vec<u8>, String> {
+        Ok(Vec::new())
+    }
+    fn extra(&self, _evidence: &[u8]) -> Vec<u8> {
+        Vec::new()
+    }
+}
+
 /// `attestation` binds no evidence either (the CA cert travels in the
 /// keycard part), and composes with the keycard scheme only.
 pub struct AttestationClaimant;
