@@ -4,6 +4,7 @@
 //   eth     EIP-191 by a module-owned secp256k1 key
 //   lez     BIP-340 by a module-owned LEZ account key
 //   logos   zkSign by a logos-blockchain node key (+ pow-claim discovery)
+//   peer    nothing signed: the libp2p node's own peer id is the identity
 // `identity` reports what an allocator operator allowlists per scheme.
 //
 // Key custody (eth, lez) is demo-grade on purpose: each key is a plaintext
@@ -15,10 +16,11 @@
 use std::sync::Arc;
 
 use rln_auth_vector::{dispatch_produce, AuthType, ProduceRegistry};
-use rln_auth_vectors::claimant::{AllowlistClaimant, AttestationClaimant, PowClaimant};
+use rln_auth_vector::Signer;
+use rln_auth_vectors::claimant::{AllowlistClaimant, AnyClaimant, AttestationClaimant, PowClaimant};
 use rln_auth_vectors::scheme::eth::address_of;
 use rln_auth_vectors::signer::logos::resolve_key;
-use rln_auth_vectors::signer::{EthSigner, KeySource, LezKey, LezSigner, LogosSigner, NodeArgs};
+use rln_auth_vectors::signer::{EthSigner, KeySource, LezKey, LezSigner, LogosSigner, NodeArgs, PeerSigner};
 use serde_json::{json, Value};
 use zksign_light::{HttpZkNode, ZkNode};
 
@@ -300,7 +302,9 @@ impl RlnSign {
             .signer(EthSigner(Box::new(ModuleKeySource { store: store.clone(), kind: Kind::Eth })))
             .signer(LezSigner(Box::new(ModuleKeySource { store: store.clone(), kind: Kind::Lez })))
             .signer(LogosSigner { node: test_node.clone().map(|n| Box::new(n) as Box<dyn ZkNode + Send + Sync>) })
+            .signer(PeerSigner)
             .claimant(AllowlistClaimant)
+            .claimant(AnyClaimant)
             .claimant(AttestationClaimant)
             .claimant(PowClaimant::http());
         RlnSign { store, registry, test_node }
@@ -335,6 +339,9 @@ impl RlnSign {
                 // The key is held durably by the node's KMS.
                 json!({ "scheme": "logos", "id": k, "source": source, "persisted": true })
             }
+            // The libp2p node's key, held by libp2p_module: the caller passes
+            // the peer id it read from peerInfo.
+            "peer" => json!({ "scheme": "peer", "id": PeerSigner.identity(req.get("args"))?.canonical(), "source": "args", "persisted": true }),
             other => return Err(unknown_scheme(other)),
         };
         if let Some(t) = req.get("auth_type") {

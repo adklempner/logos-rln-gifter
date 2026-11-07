@@ -9,15 +9,17 @@
 use std::sync::OnceLock;
 
 use rln_auth_vector::{dispatch_verify, VerifyRegistry};
-use rln_auth_vectors::authoriser::{Allowlist, Attestation, PowClaim};
-use rln_auth_vectors::scheme::{Eth, Keycard, Lez, Logos};
+use rln_auth_vectors::authoriser::{Allowlist, Any, Attestation, PowClaim};
+use rln_auth_vectors::scheme::{Eth, Keycard, Lez, Logos, Peer};
 
 pub trait RlnAuthModule: Send + 'static {
     /// rln_auth_vector VERIFY_METHOD. One JSON-string arg (VerifyRequest);
     /// `auth_type` is `<scheme>-<authoriser>` over the schemes eth, lez,
-    /// logos, keycard and the authorisers allowlist, attestation, pow-claim
-    /// (see `supported_auth_types`). `{"ok", "reason"?, "nullifier"?}` or
-    /// `{"error"}` (malformed request, unknown composition, bad config).
+    /// logos, keycard, peer and the authorisers allowlist, any, attestation,
+    /// pow-claim (see `supported_auth_types`). The request's `peer_id` (the
+    /// requester as the gifter's transport proved it) is what the peer
+    /// scheme judges. `{"ok", "reason"?, "nullifier"?}` or `{"error"}`
+    /// (malformed request, unknown composition, bad config).
     fn verify_auth(&mut self, args_json: String) -> String;
     /// The `auth_type`s this module answers, as a JSON array (what an
     /// allocator advertises).
@@ -45,7 +47,9 @@ fn registry() -> &'static VerifyRegistry {
             .scheme(Lez)
             .scheme(Logos)
             .scheme(Keycard)
+            .scheme(Peer)
             .authoriser(Allowlist)
+            .authoriser(Any)
             .authoriser(Attestation)
             .authoriser(PowClaim)
     })
@@ -100,9 +104,27 @@ mod tests {
     }
 
     #[test]
-    fn supported_auth_types_are_the_six_compositions() {
+    fn supported_auth_types_are_the_twelve_compositions() {
         let list: Vec<String> = serde_json::from_str(&RlnAuth::default().supported_auth_types()).unwrap();
-        assert_eq!(list, ["eth-allowlist", "lez-allowlist", "logos-allowlist", "logos-pow-claim", "keycard-allowlist", "keycard-attestation"]);
+        assert_eq!(list, [
+            "eth-allowlist", "eth-any", "lez-allowlist", "lez-any", "logos-allowlist", "logos-any", "logos-pow-claim",
+            "keycard-allowlist", "keycard-any", "keycard-attestation", "peer-allowlist", "peer-any",
+        ]);
+    }
+
+    #[test]
+    fn peer_any_accepts_the_transport_peer_through_the_module() {
+        let peer = "16Uiu2HAkyiMKmjcAj4FS5jot1jMZB73mnY3wJnSTKZmTBhrFJEaT";
+        let out = call(json!({
+            "auth_type": "peer-any", "payload_hex": "026400000000000000",
+            "id_commitment_hex": IDC, "rate": 100, "config": {}, "peer_id": peer,
+        }));
+        assert_eq!(out["ok"], true, "{out}");
+        assert_eq!(out["nullifier"], rln_auth_vectors::scheme::peer::parse_peer_id(peer).unwrap());
+        let out = call(json!({
+            "auth_type": "peer-any", "payload_hex": "026400000000000000", "id_commitment_hex": IDC, "rate": 100,
+        }));
+        assert!(out["error"].as_str().unwrap().contains("transport peer id unavailable"), "{out}");
     }
 
     #[test]

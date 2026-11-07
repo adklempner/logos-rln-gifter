@@ -953,7 +953,7 @@ dependencies = [
 [[package]]
 name = "keycard_attest"
 version = "0.2.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.2.0#bdaed4fd0b776e775bce023f77200f94052e1140"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
 dependencies = [
  "k256",
  "sha2",
@@ -994,9 +994,9 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "log"
-version = "0.4.34"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "logos-blockchain-groth16"
@@ -1231,7 +1231,7 @@ dependencies = [
 [[package]]
 name = "pow-claim"
 version = "0.2.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.2.0#bdaed4fd0b776e775bce023f77200f94052e1140"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
 dependencies = [
  "ark-ff",
  "blake2",
@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "rln_auth_module"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "logos-rust-sdk",
@@ -1364,8 +1364,8 @@ dependencies = [
 
 [[package]]
 name = "rln_auth_vector"
-version = "0.2.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.2.0#bdaed4fd0b776e775bce023f77200f94052e1140"
+version = "0.3.0"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
 dependencies = [
  "hex",
  "serde",
@@ -1375,8 +1375,8 @@ dependencies = [
 
 [[package]]
 name = "rln_auth_vectors"
-version = "0.1.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.2.0#bdaed4fd0b776e775bce023f77200f94052e1140"
+version = "0.2.0"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
 dependencies = [
  "base58",
  "hex",
@@ -1945,7 +1945,7 @@ dependencies = [
 [[package]]
 name = "zksign_light"
 version = "0.2.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.2.0#bdaed4fd0b776e775bce023f77200f94052e1140"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
 dependencies = [
  "ark-ff",
  "hex",
