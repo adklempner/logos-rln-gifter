@@ -105,6 +105,9 @@ start_node() {
     local out
     out=$(logosctl --json call blockchain_module start "$CFG" "$DEP" 2>&1 | call_ok) && return 0
     say "blockchain_module.start answered: ${out:-<nothing>}"
+    # A start whose RPC timed out has still started the node: the retry is
+    # answered "already running", which is success.
+    case "$out" in *"already running"*) return 0 ;; esac
     return 1
 }
 say "start $CFG '${DEP}'"

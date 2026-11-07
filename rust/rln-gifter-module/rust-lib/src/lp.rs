@@ -1,11 +1,9 @@
 // Raw lp_* cross-module client with explicit per-call timeouts, keyed by target
 // module. The SDK's PluginProxy pins timeout_ms=0 (the 20s protocol default),
 // while the gifter's protocolRequest and register_member run up to ~190s — so we
-// bind the consumer C ABI directly, exactly as the sibling rln/membership
-// modules do. Reply envelope matches the SDK's call_json: parse(result_json),
+// bind the consumer C ABI directly. Reply envelope matches the SDK's call_json: parse(result_json),
 // which is a value object for universal C++ modules (libp2p_module) and a
 // JSON-encoded string for cdylib modules (liblogos_lez_rln_module).
-// FEATURE: RLN membership gifter cross-module transport
 
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -16,17 +14,18 @@ use std::time::Duration;
 use base64::Engine;
 use serde_json::Value;
 
-// lp targets, deliberately NOT declared in metadata.json dependencies: the
-// per-target clients are created lazily, so a deployment missing one (e.g. a
-// headless gifter server without some vector's producer module) still loads
-// and only fails if that target is actually called. Auth vector modules are
-// named by CONFIGURATION (authProvider / authVerifiers), never by constants
-// here — this module knows no vector by name.
-// The registry-provider module register_member lives on. Pre-2026-08-10
-// this module was NAMED liblogos_rln_module (the rename swapped the
-// meaning: that name is now the membership module, which has no
-// register_member); the gifter registers through the lez-rln registry.
-pub const RLN_MODULE: &str = "liblogos_lez_rln_module";
+// lp targets. libp2p_module IS declared in metadata.json (the one module
+// this one cannot do anything without; logoscore loads it first), but it is
+// still reached through this raw client for the per-call timeouts the SDK
+// client does not give. The registry module and the auth vector modules are
+// not declared: the per-target clients are created lazily, so a deployment
+// missing one (e.g. a headless allocator without some vector's producer
+// module) still loads and only fails if that target is actually called.
+// Auth vector modules are named by CONFIGURATION (authProvider /
+// authVerifiers), never by constants here — this module knows no vector by
+// name.
+// The lez module (liblogos_lez_rln_module): `register_member` lives on it.
+pub const LEZ_RLN_MODULE: &str = "liblogos_lez_rln_module";
 pub const LIBP2P_MODULE: &str = "libp2p_module";
 
 /// Standard base64 (padded) — the encoding libp2p_module's stream JSON wrappers
@@ -134,7 +133,7 @@ unsafe impl Send for ClientHandle {}
 static CLIENTS: Mutex<Option<HashMap<String, ClientHandle>>> = Mutex::new(None);
 static OWNER: Mutex<Option<ThreadId>> = Mutex::new(None);
 
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 

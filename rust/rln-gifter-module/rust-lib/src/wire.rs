@@ -1,11 +1,98 @@
 // Minimal protobuf wire codec for the RLN membership gifter messages, matching
 // nim-libp2p minprotobuf (standard protobuf: varint keys, LEN-delimited for
 // bytes/strings, varint for uint64/bool). No external protobuf dependency.
-// FEATURE: RLN membership gifter wire codec (byte-identical to the nwaku port)
+// The wire is byte-identical to the nwaku port.
+
+use base58::FromBase58;
+use base64::Engine;
+use sha2::{Digest, Sha256};
+
+/// The wire's failure message prefixes: the client reads them to tell a
+/// request nothing acted on (another allocator may) from one that may have
+/// landed (stop, the credential is spent).
+pub const NOT_SUBMITTED_PREFIX: &str = "not submitted: ";
+pub const UNCONFIRMED_PREFIX: &str = "unconfirmed: ";
 
 // The wire carries authentication_type as opaque bytes — vector names live in
 // the rln_auth_vector crate and in gifter configuration, not here.
 pub const RLN_GIFTER_CODEC: &str = "/logos/rln/membership/1.0.0";
+
+/// The service id an allocator advertises through libp2p service discovery
+/// (LIP-158 Appendix A: the protocol id). One advertisement per node: a
+/// registrar makes a second advertisement from the same IP wait a whole ad
+/// lifetime (nim-libp2p's Sybil defence), so what the node serves rides in
+/// the advertisement's data instead of in further ids.
+pub const RLN_GIFTER_SERVICE_ID: &str = RLN_GIFTER_CODEC;
+/// First byte of the advertised data: its layout version.
+pub const SERVICE_DATA_VERSION: u8 = b'1';
+/// libp2p caps a service's data at 33 bytes: the version byte plus eight
+/// base64 digests of 3 bytes (4 chars each, no padding).
+pub const MAX_ADVERTISED_PAIRS: usize = 8;
+const PAIR_DIGEST_LEN: usize = 3;
+
+/// A served (registry, auth type) pair as an advertisement names it: the
+/// first 3 bytes of sha256(`<registry canonical hex>/<auth_type>`). An open
+/// allocator (no verifiers) serves the empty auth type.
+pub fn pair_digest(registry_hex: &str, auth_type: &str) -> [u8; PAIR_DIGEST_LEN] {
+    let h = Sha256::digest(format!("{registry_hex}/{auth_type}").as_bytes());
+    let mut d = [0u8; PAIR_DIGEST_LEN];
+    d.copy_from_slice(&h[..PAIR_DIGEST_LEN]);
+    d
+}
+
+/// The data an allocator advertises for its served pairs: the version byte
+/// and the sorted, deduplicated digests, base64 without padding. Text, so
+/// it crosses the module wire as a JSON string unchanged.
+pub fn service_data(pairs: &[(String, String)]) -> Result<String, String> {
+    let mut digests: Vec<[u8; PAIR_DIGEST_LEN]> =
+        pairs.iter().map(|(r, t)| pair_digest(r, t)).collect();
+    digests.sort_unstable();
+    digests.dedup();
+    if digests.len() > MAX_ADVERTISED_PAIRS {
+        return Err(format!(
+            "an advertisement carries at most {MAX_ADVERTISED_PAIRS} (registry, auth type) pairs, not {}",
+            digests.len()
+        ));
+    }
+    let bytes: Vec<u8> = digests.concat();
+    let mut out = String::with_capacity(1 + bytes.len() * 4 / 3);
+    out.push(SERVICE_DATA_VERSION as char);
+    out.push_str(&base64::engine::general_purpose::STANDARD_NO_PAD.encode(bytes));
+    Ok(out)
+}
+
+/// Whether advertised data (the raw bytes of a discovery record's service
+/// data) lists this pair. Data of another version or layout lists nothing.
+pub fn service_data_lists(data: &[u8], registry_hex: &str, auth_type: &str) -> bool {
+    let Some((&version, rest)) = data.split_first() else { return false };
+    if version != SERVICE_DATA_VERSION {
+        return false;
+    }
+    let Ok(bytes) = base64::engine::general_purpose::STANDARD_NO_PAD.decode(rest) else {
+        return false;
+    };
+    let want = pair_digest(registry_hex, auth_type);
+    bytes.chunks_exact(PAIR_DIGEST_LEN).any(|c| c == want)
+}
+
+/// A registry's ConfigState account as callers write it — 64 hex (`0x` ok,
+/// any case) or the base58 a wallet prints — as lowercase hex: the one form
+/// the allocator keys its registries and its spent credentials by, and the one
+/// it answers in `config_account_id`. The registry module takes either.
+pub fn canonical_account(s: &str) -> Result<String, String> {
+    let s = s.trim();
+    let h = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    if h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Ok(h.to_ascii_lowercase());
+    }
+    let bytes = s
+        .from_base58()
+        .map_err(|e| format!("config account '{s}': neither 64 hex nor base58 ({e:?})"))?;
+    if bytes.len() != 32 {
+        return Err(format!("config account '{s}': base58 decodes to {} bytes, want 32", bytes.len()));
+    }
+    Ok(hex::encode(bytes))
+}
 
 /// The BN254 scalar field modulus r, big-endian.
 const BN254_R_BE: [u8; 32] = [
@@ -47,6 +134,10 @@ pub struct RlnGifterRequest {
     pub authentication_payload: Vec<u8>,
     pub identity_commitment: Vec<u8>,
     pub rate_limit: Option<u64>,
+    /// The registry (ConfigState account) the membership is wanted on; field
+    /// 100, beside the spec, as the reply's `config_account_id` is. Absent =
+    /// whatever the allocator serves by default.
+    pub config_account_id: Option<String>,
 }
 
 #[derive(Default, Clone)]
@@ -184,6 +275,9 @@ impl RlnGifterRequest {
         if let Some(r) = self.rate_limit {
             put_varint_field(&mut out, 5, r);
         }
+        if let Some(ref cfg) = self.config_account_id {
+            put_len_field(&mut out, 100, cfg.as_bytes());
+        }
         out
     }
 
@@ -203,6 +297,7 @@ impl RlnGifterRequest {
                 have_idc = true;
             }
             5 => m.rate_limit = Some(as_u64(v)),
+            100 => m.config_account_id = Some(as_string(v)),
             _ => {}
         })?;
         if !have_id {
@@ -320,6 +415,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn advertised_data_names_each_served_pair_once_and_fits_libp2p() {
+        let (d, m) = (hex::encode([0xd; 32]), hex::encode([0xa; 32]));
+        let pairs = vec![
+            (d.clone(), "peer-any".to_string()),
+            (m.clone(), "peer-any".to_string()),
+            (d.clone(), "eth-allowlist".to_string()),
+            (d.clone(), "peer-any".to_string()),
+        ];
+        let data = service_data(&pairs).unwrap();
+        assert_eq!(data.len(), 1 + 3 * 4, "{data}");
+        assert!(data.starts_with('1'));
+        for (r, t) in &pairs {
+            assert!(service_data_lists(data.as_bytes(), r, t), "{r}/{t}");
+        }
+        assert!(!service_data_lists(data.as_bytes(), &m, "eth-allowlist"));
+        assert!(!service_data_lists(data.as_bytes(), &d, ""));
+        assert!(!service_data_lists(b"", &d, "peer-any"));
+        assert!(!service_data_lists(format!("2{}", &data[1..]).as_bytes(), &d, "peer-any"));
+        assert!(!service_data_lists(b"1not*base64", &d, "peer-any"));
+
+        let open = service_data(&[(d.clone(), String::new())]).unwrap();
+        assert!(service_data_lists(open.as_bytes(), &d, ""));
+
+        let eight: Vec<(String, String)> =
+            (0..8u8).map(|i| (d.clone(), format!("t{i}"))).collect();
+        assert_eq!(service_data(&eight).unwrap().len(), 33);
+        let nine: Vec<(String, String)> =
+            (0..9u8).map(|i| (d.clone(), format!("t{i}"))).collect();
+        assert!(service_data(&nine).unwrap_err().contains("at most 8"));
+        assert_eq!(service_data(&[]).unwrap(), "1");
+    }
+
+    #[test]
     fn commitment_refusal_mirrors_the_registry() {
         // r itself, little-endian: refused; r - 1: accepted.
         let mut r_le = BN254_R_BE;
@@ -341,6 +469,17 @@ mod tests {
     }
 
     #[test]
+    fn config_accounts_normalise_to_lowercase_hex() {
+        let hex = "ab".repeat(32);
+        assert_eq!(canonical_account(&format!(" 0X{} ", hex.to_uppercase())).unwrap(), hex);
+        // base58 of 32 0xab bytes.
+        let b58 = "CZ8YUVdk7znjrUmnb5n7kgySk9yRAsQDYmyCxzfSky9t";
+        assert_eq!(canonical_account(b58).unwrap(), hex);
+        assert!(canonical_account("ab0").unwrap_err().contains("neither 64 hex nor base58"));
+        assert!(canonical_account("11").unwrap_err().contains("want 32"));
+    }
+
+    #[test]
     fn request_roundtrip() {
         let req = RlnGifterRequest {
             request_id: "abc123".into(),
@@ -348,6 +487,7 @@ mod tests {
             authentication_payload: vec![1, 2, 3, 4],
             identity_commitment: vec![9u8; 32],
             rate_limit: Some(100),
+            config_account_id: Some("cfgAccount".into()),
         };
         let dec = RlnGifterRequest::decode(&req.encode()).unwrap();
         assert_eq!(dec.request_id, "abc123");
@@ -355,6 +495,7 @@ mod tests {
         assert_eq!(dec.authentication_payload, vec![1, 2, 3, 4]);
         assert_eq!(dec.identity_commitment, vec![9u8; 32]);
         assert_eq!(dec.rate_limit, Some(100));
+        assert_eq!(dec.config_account_id.as_deref(), Some("cfgAccount"));
     }
 
     #[test]
@@ -391,10 +532,17 @@ mod tests {
             authentication_payload: vec![],
             identity_commitment: vec![0xff],
             rate_limit: Some(1),
+            config_account_id: None,
         };
         assert_eq!(
             req.encode(),
             vec![0x0A, 0x01, b'x', 0x12, 0x00, 0x1A, 0x00, 0x22, 0x01, 0xff, 0x28, 0x01]
         );
+        // Field 100, wire type 2: key (100 << 3) | 2 = 802 = varint A2 06.
+        let with_cfg = RlnGifterRequest { config_account_id: Some("c".into()), ..req };
+        let mut want = vec![0x0A, 0x01, b'x', 0x12, 0x00, 0x1A, 0x00, 0x22, 0x01, 0xff, 0x28, 0x01];
+        want.extend_from_slice(&[0xA2, 0x06, 0x01, b'c']);
+        assert_eq!(with_cfg.encode(), want);
+        assert_eq!(RlnGifterRequest::decode(&want).unwrap().config_account_id.as_deref(), Some("c"));
     }
 }

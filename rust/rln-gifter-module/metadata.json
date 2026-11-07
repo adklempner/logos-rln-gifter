@@ -1,13 +1,13 @@
 {
   "name": "rln_gifter_module",
-  "version": "0.3.1",
+  "version": "0.5.0",
   "description": "RLN membership gifter over libp2p: vector-agnostic client requests + gifter serve (auth via pluggable rln_auth_vector modules)",
   "author": "Logos",
   "type": "core",
   "interface": "cdylib",
   "category": "blockchain",
   "main": "rln_gifter_module_plugin",
-  "dependencies": [],
+  "dependencies": ["libp2p_module"],
   "include": [],
   "capabilities": [],
   "codegen": {
