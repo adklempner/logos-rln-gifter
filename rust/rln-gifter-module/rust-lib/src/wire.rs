@@ -43,7 +43,7 @@ pub fn pair_digest(registry_hex: &str, auth_type: &str) -> [u8; PAIR_DIGEST_LEN]
 /// The data an allocator advertises for its served pairs: the version byte
 /// and the sorted, deduplicated digests, base64 without padding. Text, so
 /// it crosses the module wire as a JSON string unchanged.
-pub fn service_data(pairs: &[(String, String)]) -> Result<String, String> {
+pub fn service_data(pairs: &[(&str, &str)]) -> Result<String, String> {
     let mut digests: Vec<[u8; PAIR_DIGEST_LEN]> =
         pairs.iter().map(|(r, t)| pair_digest(r, t)).collect();
     digests.sort_unstable();
@@ -217,6 +217,9 @@ fn read_varint(buf: &[u8], i: &mut usize) -> Option<u64> {
     }
 }
 
+// OWNERSHIP: a view into the frame being walked (a u64 or a borrowed slice);
+// Copy, so the field readers take it by value and own nothing.
+#[derive(Clone, Copy)]
 enum FieldVal<'a> {
     Varint(u64),
     Bytes(&'a [u8]),
@@ -427,11 +430,11 @@ mod tests {
     #[test]
     fn advertised_data_names_each_served_pair_once_and_fits_libp2p() {
         let (d, m) = (hex::encode([0xd; 32]), hex::encode([0xa; 32]));
-        let pairs = vec![
-            (d.clone(), "peer-any".to_string()),
-            (m.clone(), "peer-any".to_string()),
-            (d.clone(), "eth-allowlist".to_string()),
-            (d.clone(), "peer-any".to_string()),
+        let pairs = [
+            (d.as_str(), "peer-any"),
+            (m.as_str(), "peer-any"),
+            (d.as_str(), "eth-allowlist"),
+            (d.as_str(), "peer-any"),
         ];
         let data = service_data(&pairs).unwrap();
         assert_eq!(data.len(), 1 + 3 * 4, "{data}");
@@ -449,12 +452,16 @@ mod tests {
         ));
         assert!(!service_data_lists(b"1not*base64", &d, "peer-any"));
 
-        let open = service_data(&[(d.clone(), String::new())]).unwrap();
+        let open = service_data(&[(d.as_str(), "")]).unwrap();
         assert!(service_data_lists(open.as_bytes(), &d, ""));
 
-        let eight: Vec<(String, String)> = (0..8u8).map(|i| (d.clone(), format!("t{i}"))).collect();
+        let types: Vec<String> = (0..9u8).map(|i| format!("t{i}")).collect();
+        let eight: Vec<(&str, &str)> = types[..8]
+            .iter()
+            .map(|t| (d.as_str(), t.as_str()))
+            .collect();
         assert_eq!(service_data(&eight).unwrap().len(), 33);
-        let nine: Vec<(String, String)> = (0..9u8).map(|i| (d.clone(), format!("t{i}"))).collect();
+        let nine: Vec<(&str, &str)> = types.iter().map(|t| (d.as_str(), t.as_str())).collect();
         assert!(service_data(&nine).unwrap_err().contains("at most 8"));
         assert_eq!(service_data(&[]).unwrap(), "1");
     }

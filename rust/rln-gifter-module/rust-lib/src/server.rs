@@ -182,7 +182,7 @@ static ADVERTISED: Mutex<Option<Placed>> = Mutex::new(None);
 /// When the worker last read the outbound peer count (unix s).
 static PEERS_CHECKED_AT: AtomicU64 = AtomicU64::new(0);
 
-fn blob(v: Value) -> Value {
+fn blob(v: &Value) -> Value {
     // Single JSON-blob arg wrapped in a positional args array, as the
     // JSON-blob methods on libp2p_module expect.
     json!([v.to_string()])
@@ -190,10 +190,12 @@ fn blob(v: Value) -> Value {
 
 /// The (registry, auth type) pairs a configuration serves, in the order
 /// `serve` lists its registries; an open allocator serves the empty type.
-fn served_pairs(
-    served: &[String],
-    auth_verifiers: &HashMap<String, (String, Option<Value>)>,
-) -> Vec<(String, String)> {
+// OWNERSHIP: the pairs borrow the registry list and the verifier map, which
+// outlive the advertisement data built from them.
+fn served_pairs<'a>(
+    served: &'a [String],
+    auth_verifiers: &'a HashMap<String, (String, Option<Value>)>,
+) -> Vec<(&'a str, &'a str)> {
     let mut types: Vec<&str> = auth_verifiers.keys().map(String::as_str).collect();
     types.sort_unstable();
     if types.is_empty() {
@@ -201,7 +203,7 @@ fn served_pairs(
     }
     served
         .iter()
-        .flat_map(|r| types.iter().map(move |t| (r.clone(), t.to_string())))
+        .flat_map(|r| types.iter().map(move |t| (r.as_str(), *t)))
         .collect()
 }
 
@@ -503,7 +505,7 @@ fn worker_loop() {
         // libp2p_module 1.1.0 — the requester as the secure channel proved it).
         let accept = lp::call_libp2p(
             "protocolAcceptStream",
-            &blob(json!({ "proto": RLN_GIFTER_CODEC, "timeoutMs": ACCEPT_TIMEOUT_MS })),
+            &blob(&json!({ "proto": RLN_GIFTER_CODEC, "timeoutMs": ACCEPT_TIMEOUT_MS })),
             ACCEPT_TIMEOUT_MS + ACCEPT_CALL_MARGIN_MS,
         );
         let stream_id = match &accept {
@@ -531,7 +533,7 @@ fn handle_stream(stream_id: u64, peer_id: Option<&str>) -> Result<(), String> {
     let release = || {
         let _ = lp::call_libp2p(
             "streamReleaseJson",
-            &blob(json!({ "streamId": stream_id })),
+            &blob(&json!({ "streamId": stream_id })),
             10_000,
         );
     };
@@ -540,7 +542,7 @@ fn handle_stream(stream_id: u64, peer_id: Option<&str>) -> Result<(), String> {
     let req_bytes = (|| -> Result<Vec<u8>, String> {
         let read = lp::call_libp2p(
             "streamReadLpJson",
-            &blob(json!({ "streamId": stream_id, "maxSize": MAX_RPC_SIZE, "timeoutMs": READ_TIMEOUT_MS })),
+            &blob(&json!({ "streamId": stream_id, "maxSize": MAX_RPC_SIZE, "timeoutMs": READ_TIMEOUT_MS })),
             READ_TIMEOUT_MS + 10_000,
         )?;
         let data_b64 = read.get("dataB64").and_then(Value::as_str).ok_or("streamReadLpJson: no dataB64")?;
@@ -555,25 +557,27 @@ fn handle_stream(stream_id: u64, peer_id: Option<&str>) -> Result<(), String> {
     // released its side after reading.
     let _ = lp::call_libp2p(
         "streamWriteLpJson",
-        &blob(json!({ "streamId": stream_id, "dataB64": b64(&resp.encode()) })),
+        &blob(&json!({ "streamId": stream_id, "dataB64": b64(&resp.encode()) })),
         WRITE_TIMEOUT_MS + 10_000,
     );
     let _ = lp::call_libp2p(
         "streamReleaseJson",
-        &blob(json!({ "streamId": stream_id })),
+        &blob(&json!({ "streamId": stream_id })),
         10_000,
     );
     Ok(())
 }
 
-fn failure_response(request_id: &str, auth_success: bool, message: &str) -> RlnGifterResponse {
+fn failure_response(request_id: String, auth_success: bool, message: String) -> RlnGifterResponse {
     RlnGifterResponse {
-        request_id: request_id.to_string(),
+        request_id,
         auth_success,
-        error: Some(message.to_string()),
+        // OWNERSHIP: the wire carries the message twice (field 3 and the
+        // failure sub-message); one copy, the original moves into the second.
+        error: Some(message.clone()),
         success: None,
         failure: Some(MembershipAllocationFailure {
-            error_message: message.to_string(),
+            error_message: message,
         }),
     }
 }
@@ -585,7 +589,7 @@ fn failure_response(request_id: &str, auth_success: bool, message: &str) -> RlnG
 fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
     let req: RlnGifterRequest = match RlnGifterRequest::decode(buf) {
         Ok(r) => r,
-        Err(e) => return failure_response("N/A", false, &format!("decode error: {e}")),
+        Err(e) => return failure_response("N/A".to_owned(), false, format!("decode error: {e}")),
     };
 
     // Length AND field membership: a non-canonical commitment must never
@@ -594,17 +598,17 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
     // charged).
     if let Some(why) = crate::wire::commitment_refusal(&req.identity_commitment) {
         return failure_response(
-            &req.request_id,
+            req.request_id,
             true,
-            &RegisterError::NotSubmitted(why.to_string()).message(),
+            RegisterError::NotSubmitted(why.to_string()).message(),
         );
     }
 
     let Some(cfg) = lock(&SERVER).clone() else {
         return failure_response(
-            &req.request_id,
+            req.request_id,
             true,
-            &RegisterError::NotSubmitted("gifter not configured".to_string()).message(),
+            RegisterError::NotSubmitted("gifter not configured".to_string()).message(),
         );
     };
 
@@ -612,7 +616,7 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
     // no verifier round-trip and no nullifier reservation.
     let (registry, max_rate_limit) = match cfg.resolve_registry(req.config_account_id.as_deref()) {
         Ok(r) => r,
-        Err(why) => return failure_response(&req.request_id, false, &why),
+        Err(why) => return failure_response(req.request_id, false, why),
     };
 
     let auth_type = String::from_utf8_lossy(&req.authentication_type).to_string();
@@ -634,9 +638,9 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
         // module carries bytes, it doesn't judge them.
         let Some((module, verifier_config)) = cfg.auth_verifiers.get(&auth_type) else {
             return failure_response(
-                &req.request_id,
+                req.request_id,
                 false,
-                &format!("unsupported authentication_type: '{auth_type}'"),
+                format!("unsupported authentication_type: '{auth_type}'"),
             );
         };
         let verify_req = VerifyRequest {
@@ -650,7 +654,7 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
         let verify_json = match serde_json::to_string(&verify_req) {
             Ok(s) => s,
             Err(e) => {
-                return failure_response(&req.request_id, false, &format!("verify request: {e}"))
+                return failure_response(req.request_id, false, format!("verify request: {e}"))
             }
         };
         let reply = match lp::call_module_json(
@@ -662,9 +666,9 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
             Ok(r) => r,
             Err(e) => {
                 return failure_response(
-                    &req.request_id,
+                    req.request_id,
                     false,
-                    &format!("auth verifier {module}: {e}"),
+                    format!("auth verifier {module}: {e}"),
                 )
             }
         };
@@ -672,18 +676,17 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
             Ok(v) => v,
             Err(e) => {
                 return failure_response(
-                    &req.request_id,
+                    req.request_id,
                     false,
-                    &format!("auth verifier {module}: {e}"),
+                    format!("auth verifier {module}: {e}"),
                 )
             }
         };
         if !verdict.ok {
             let reason = verdict
                 .reason
-                .as_deref()
-                .unwrap_or("verifier rejected the request");
-            return failure_response(&req.request_id, false, reason);
+                .unwrap_or_else(|| "verifier rejected the request".to_owned());
+            return failure_response(req.request_id, false, reason);
         }
         // A verdict nullifier opts in to the shared replay protection:
         // reserve BEFORE the register await so a concurrent request spending
@@ -699,9 +702,9 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
             let nul = nul.trim().to_lowercase();
             if nul.is_empty() || nul.chars().any(|c| c.is_whitespace() || c.is_control()) {
                 return failure_response(
-                    &req.request_id,
+                    req.request_id,
                     false,
-                    &format!("auth verifier {module}: malformed nullifier"),
+                    format!("auth verifier {module}: malformed nullifier"),
                 );
             }
             let nul = rln_auth_vector::namespaced_nullifier(&registry, &auth_type, &nul);
@@ -723,18 +726,18 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
                     };
                 }
                 return failure_response(
-                    &req.request_id,
+                    req.request_id,
                     false,
-                    &format!("credential already used: {nul}"),
+                    format!("credential already used: {nul}"),
                 );
             }
             let mut g = lock(&CONSUMED_NULLIFIERS);
             let set = g.get_or_insert_with(HashSet::new);
             if !set.insert(nul.clone()) {
                 return failure_response(
-                    &req.request_id,
+                    req.request_id,
                     false,
-                    &format!("credential already used: {nul}"),
+                    format!("credential already used: {nul}"),
                 );
             }
             // A reservation that never reached disk does not survive a
@@ -742,9 +745,9 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
             if let Err(e) = auth::append_nullifier(&cfg.nullifiers_path, &nul) {
                 set.remove(&nul);
                 return failure_response(
-                    &req.request_id,
+                    req.request_id,
                     true,
-                    &RegisterError::NotSubmitted(format!("nullifier store: {e}")).message(),
+                    RegisterError::NotSubmitted(format!("nullifier store: {e}")).message(),
                 );
             }
             authorized_nullifier = Some(nul);
@@ -955,8 +958,8 @@ mod tests {
         hex::encode([b; 32])
     }
 
-    fn served(a: Value) -> ServerCfg {
-        let (registries, served) = parse_registries(&a, &acct(0xd).to_uppercase(), 100).unwrap();
+    fn served(a: &Value) -> ServerCfg {
+        let (registries, served) = parse_registries(a, &acct(0xd).to_uppercase(), 100).unwrap();
         ServerCfg {
             default_config: served[0].clone(),
             registries,
@@ -971,7 +974,7 @@ mod tests {
         let (d, m, x) = (acct(0xd), acct(0xab), acct(0xb));
         // The mix account in base58 (32 bytes of 0xab).
         let m_b58 = "CZ8YUVdk7znjrUmnb5n7kgySk9yRAsQDYmyCxzfSky9t";
-        let cfg = served(json!({ "registries": [m_b58, { "config": x, "maxRateLimit": 20 }] }));
+        let cfg = served(&json!({ "registries": [m_b58, { "config": x, "maxRateLimit": 20 }] }));
         assert_eq!(cfg.resolve_registry(None).unwrap(), (d.clone(), 100));
         assert_eq!(
             cfg.resolve_registry(Some(&format!(" {} ", m.to_uppercase())))
@@ -1008,20 +1011,21 @@ mod tests {
             "eth-allowlist".to_string(),
             ("rln_auth_module".to_string(), None),
         );
-        let pairs = served_pairs(&[d.clone(), m.clone()], &verifiers);
+        let registries = [d.clone(), m.clone()];
+        let pairs = served_pairs(&registries, &verifiers);
         assert_eq!(
             pairs,
             [
-                (d.clone(), "eth-allowlist".to_string()),
-                (d.clone(), "peer-any".to_string()),
-                (m.clone(), "eth-allowlist".to_string()),
-                (m.clone(), "peer-any".to_string()),
+                (d.as_str(), "eth-allowlist"),
+                (d.as_str(), "peer-any"),
+                (m.as_str(), "eth-allowlist"),
+                (m.as_str(), "peer-any"),
             ]
         );
         // An open allocator serves the empty type on each registry.
         assert_eq!(
             served_pairs(&[d.clone()], &HashMap::new()),
-            [(d, String::new())]
+            [(d.as_str(), "")]
         );
     }
 
@@ -1075,7 +1079,7 @@ mod tests {
     #[test]
     fn an_unserved_registry_is_refused_before_anything_else() {
         let _g = lock(&AD_STATE);
-        *lock(&SERVER) = Some(served(json!({})));
+        *lock(&SERVER) = Some(served(&json!({})));
         let mut idc = vec![0xab; 32];
         idc[31] = 0x0a;
         let req = RlnGifterRequest {
@@ -1203,7 +1207,7 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(e, "mountProtocol: refused in test");
-        let data = service_data(&[(acct(1), String::new())]).unwrap();
+        let data = service_data(&[(acct(1).as_str(), "")]).unwrap();
         let b64url = base64::Engine::encode(
             &base64::engine::general_purpose::URL_SAFE_NO_PAD,
             data.as_bytes(),
@@ -1237,7 +1241,7 @@ mod tests {
         reset_ads();
         scripted_libp2p(|| 1);
         let _ = serve(&json!({ "config": acct(1), "wallet": "w" }).to_string());
-        let data = service_data(&[(acct(1), String::new())]).unwrap();
+        let data = service_data(&[(acct(1).as_str(), "")]).unwrap();
         assert_eq!(
             ad_calls()[0],
             (

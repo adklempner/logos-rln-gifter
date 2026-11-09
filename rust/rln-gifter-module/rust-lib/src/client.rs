@@ -239,7 +239,7 @@ impl Attempt {
 /// reply gave it.
 fn ask(
     peer_id: &str,
-    addrs: &[String],
+    addrs: &[&str],
     req: &RlnGifterRequest,
     config: Option<&str>,
 ) -> Result<Value, (Attempt, bool)> {
@@ -385,7 +385,7 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
         .map(str::trim)
         .filter(|s| !s.is_empty());
     let configured = match (gifter_peer_id, gifter_multiaddr) {
-        (Some(p), Some(m)) => Some((p.to_string(), m.to_string())),
+        (Some(p), Some(m)) => Some((p, m)),
         (None, None) => None,
         _ => return Err("gifterPeerId and gifterMultiaddr go together".into()),
     };
@@ -502,7 +502,10 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
                 let at = req.identity_commitment[0] as usize % found.len();
                 found.rotate_left(at);
                 for c in &found {
-                    match ask(&c.peer_id, &c.addrs, &req, config.as_deref()) {
+                    // OWNERSHIP: borrowed view of the candidate's addresses
+                    // (pointers only, no string copied).
+                    let addrs: Vec<&str> = c.addrs.iter().map(String::as_str).collect();
+                    match ask(&c.peer_id, &addrs, &req, config.as_deref()) {
                         Ok(mut out) => {
                             out["discovered"] = json!(true);
                             return Ok(out);
@@ -523,13 +526,8 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
             outcome => tried.push(outcome.message(registry, auth_type_req)),
         }
     }
-    if let Some((peer_id, multiaddr)) = &configured {
-        return match ask(
-            peer_id,
-            std::slice::from_ref(multiaddr),
-            &req,
-            config.as_deref(),
-        ) {
+    if let Some((peer_id, multiaddr)) = configured {
+        return match ask(peer_id, &[multiaddr], &req, config.as_deref()) {
             Ok(mut out) => {
                 out["discovered"] = json!(false);
                 Ok(out)
@@ -540,7 +538,7 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
                 } else {
                     format!("{}; before that: {}", e.message(), tried.join("; "))
                 },
-                gifter: replied.then(|| (peer_id.clone(), false)),
+                gifter: replied.then(|| (peer_id.to_owned(), false)),
             }),
         };
     }
@@ -671,7 +669,7 @@ mod tests {
     #[test]
     fn a_lookup_reply_yields_the_allocators_advertising_the_pair() {
         let (d, m) = (hex::encode([0xd; 32]), hex::encode([0xa; 32]));
-        let data = crate::wire::service_data(&[(d.clone(), "peer-any".into())]).unwrap();
+        let data = crate::wire::service_data(&[(d.as_str(), "peer-any")]).unwrap();
         let rec = |peer: &str, data: &str, addrs: Value| {
             json!({ "peerId": peer, "seqNo": 1, "addrs": addrs,
                     "services": [{ "id": RLN_GIFTER_SERVICE_ID, "data": b64(data.as_bytes()) }] })
@@ -810,7 +808,7 @@ mod tests {
     }
 
     fn advertising(peer: &str, auth_type: &str) -> Value {
-        let data = crate::wire::service_data(&[(registry(), auth_type.into())]).unwrap();
+        let data = crate::wire::service_data(&[(registry().as_str(), auth_type)]).unwrap();
         json!([{ "peerId": peer, "seqNo": 1, "addrs": ["/ip4/127.0.0.1/tcp/1"],
                  "services": [{ "id": RLN_GIFTER_SERVICE_ID, "data": b64(data.as_bytes()) }] }])
     }
