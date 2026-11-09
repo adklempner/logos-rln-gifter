@@ -374,8 +374,7 @@ pub fn serve(state: &mut ServeState, args_json: &str) -> Result<Value, String> {
     let config = a
         .get("config")
         .and_then(Value::as_str)
-        .ok_or("missing config")?
-        .to_string();
+        .ok_or("missing config")?;
     let wallet = a
         .get("wallet")
         .and_then(Value::as_str)
@@ -405,7 +404,7 @@ pub fn serve(state: &mut ServeState, args_json: &str) -> Result<Value, String> {
         ),
         Some(_) => return Err("advertiseAddrs must be an array of multiaddr strings".into()),
     };
-    let (registries, served) = parse_registries(&a, &config, max_rate_limit)?;
+    let (registries, served) = parse_registries(&a, config, max_rate_limit)?;
     let default_config = served[0].clone();
 
     // A present-but-malformed authVerifiers must fail serve, never silently
