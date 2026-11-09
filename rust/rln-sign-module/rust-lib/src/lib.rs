@@ -26,7 +26,9 @@ use rln_auth_vectors::signer::{
     EthSigner, KeySource, LezKey, LezSigner, LogosSigner, NodeArgs, PeerSigner,
 };
 use serde_json::{json, Value};
-use zksign_light::{HttpZkNode, ZkNode};
+use zksign_light::HttpZkNode;
+#[cfg(test)]
+use zksign_light::ZkNode;
 
 pub trait RlnSignModule: Send + 'static {
     /// rln_auth_vector PRODUCE_METHOD. One JSON-string arg (ProduceRequest)
@@ -290,9 +292,12 @@ impl KeySource for ModuleKeySource {
 }
 
 /// A node shared between the logos signer and `identity` (tests).
+#[cfg(test)]
 #[derive(Clone)]
+// OWNERSHIP: the registry's logos signer owns a boxed handle and `RlnSign` keeps another; both reach one fake node.
 struct SharedNode(Arc<dyn ZkNode + Send + Sync>);
 
+#[cfg(test)]
 impl ZkNode for SharedNode {
     fn pow_status(&self) -> Result<Value, String> {
         self.0.pow_status()
@@ -305,12 +310,13 @@ impl ZkNode for SharedNode {
 struct RlnSign {
     store: Arc<KeyStore>,
     registry: ProduceRegistry,
+    #[cfg(test)]
     test_node: Option<SharedNode>,
 }
 
 impl Default for RlnSign {
     fn default() -> Self {
-        RlnSign::with_node(None)
+        RlnSign::build(LogosSigner::http())
     }
 }
 
@@ -332,24 +338,20 @@ fn unknown_scheme(s: &str) -> String {
 }
 
 impl RlnSign {
-    /// `node` overrides the http node of the logos signer (tests).
-    fn with_node(node: Option<Arc<dyn ZkNode + Send + Sync>>) -> Self {
+    fn build(logos: LogosSigner) -> Self {
         let store = Arc::new(KeyStore::default());
-        let test_node = node.map(SharedNode);
         let registry = ProduceRegistry::new()
+            // OWNERSHIP: cheap Arc handle clone; each boxed key source owns a handle to the shared store.
             .signer(EthSigner(Box::new(ModuleKeySource {
                 store: store.clone(),
                 kind: Kind::Eth,
             })))
+            // OWNERSHIP: cheap Arc handle clone, as above.
             .signer(LezSigner(Box::new(ModuleKeySource {
                 store: store.clone(),
                 kind: Kind::Lez,
             })))
-            .signer(LogosSigner {
-                node: test_node
-                    .clone()
-                    .map(|n| Box::new(n) as Box<dyn ZkNode + Send + Sync>),
-            })
+            .signer(logos)
             .signer(PeerSigner)
             .claimant(AllowlistClaimant)
             .claimant(AnyClaimant)
@@ -358,8 +360,41 @@ impl RlnSign {
         RlnSign {
             store,
             registry,
-            test_node,
+            #[cfg(test)]
+            test_node: None,
         }
+    }
+
+    /// `node` overrides the http node of the logos signer.
+    #[cfg(test)]
+    fn with_node(node: Option<Arc<dyn ZkNode + Send + Sync>>) -> Self {
+        let test_node = node.map(SharedNode);
+        let logos = LogosSigner {
+            // OWNERSHIP: cheap Arc handle clone; the signer boxes its own handle, `test_node` keeps the other.
+            node: test_node
+                .clone()
+                .map(|n| Box::new(n) as Box<dyn ZkNode + Send + Sync>),
+        };
+        let mut m = RlnSign::build(logos);
+        m.test_node = test_node;
+        m
+    }
+
+    /// The logos key `args` names: its `public_key`, else the node's single
+    /// auto-claim target.
+    fn logos_key(&self, args: &NodeArgs) -> Result<(String, &'static str), String> {
+        #[cfg(test)]
+        if let Some(n) = &self.test_node {
+            return resolve_key(n, args);
+        }
+        resolve_key(
+            &HttpZkNode {
+                // OWNERSHIP: `HttpZkNode` owns its URL and `resolve_key` still reads `args`.
+                url: args.node_url.clone(),
+                timeout_ms: args.http_timeout_ms,
+            },
+            args,
+        )
     }
 
     fn eth_identity(&self, key: &[u8; 32]) -> Result<Value, String> {
@@ -387,16 +422,7 @@ impl RlnSign {
             "lez" => self.lez_identity(&self.store.module_key(Kind::Lez)?),
             "logos" => {
                 let args = NodeArgs::parse(req.get("args"))?;
-                let (k, source) = match &self.test_node {
-                    Some(n) => resolve_key(n, &args)?,
-                    None => resolve_key(
-                        &HttpZkNode {
-                            url: args.node_url.clone(),
-                            timeout_ms: args.http_timeout_ms,
-                        },
-                        &args,
-                    )?,
-                };
+                let (k, source) = self.logos_key(&args)?;
                 // The key is held durably by the node's KMS.
                 json!({ "scheme": "logos", "id": k, "source": source, "persisted": true })
             }
