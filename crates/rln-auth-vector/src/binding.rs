@@ -56,6 +56,7 @@ pub fn args_object_cow(raw: Option<&Value>) -> Result<Option<Cow<'_, Map<String,
 pub fn parse_audience(v: Option<&Value>, field: &str) -> Result<String, String> {
     match v {
         None | Some(Value::Null) => Ok(String::new()),
+        // OWNERSHIP: `v` is borrowed; `Binding` owns its audience.
         Some(Value::String(s)) if s.len() <= MAX_AUDIENCE_LEN => Ok(s.clone()),
         Some(Value::String(s)) => Err(format!(
             "{field}: at most {MAX_AUDIENCE_LEN} bytes, got {}",

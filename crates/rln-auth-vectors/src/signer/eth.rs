@@ -8,6 +8,8 @@ use serde_json::Value;
 use super::{private_key_arg, KeySource};
 use crate::scheme::eth::{address_of, eip191_digest, EthAddress, NAME};
 
+// OWNERSHIP: the module picks the key source (its key store, a static key); boxed because
+// the signer sits in a static-lifetime plugin registry.
 pub struct EthSigner(pub Box<dyn KeySource>);
 
 impl EthSigner {

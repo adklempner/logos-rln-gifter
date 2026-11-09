@@ -13,6 +13,7 @@ use crate::scheme::logos::NAME as LOGOS;
 /// Builds the node client per request from `args` (the module), or uses a
 /// fixed one (tests).
 pub struct PowClaimant {
+    // OWNERSHIP: a fixed node (tests) or none (HTTP per request); boxed for the static-lifetime registry.
     pub node: Option<Box<dyn NodeApi + Send + Sync>>,
 }
 

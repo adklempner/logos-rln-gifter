@@ -40,10 +40,11 @@ impl Default for Config {
     }
 }
 
-fn opt_str(o: &Map<String, Value>, k: &str) -> Result<Option<String>, String> {
+// OWNERSHIP: the result borrows `o`'s string; callers build the owned form they keep.
+fn opt_str<'a>(o: &'a Map<String, Value>, k: &str) -> Result<Option<&'a str>, String> {
     match o.get(k) {
         None | Some(Value::Null) => Ok(None),
-        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(Value::String(s)) => Ok(Some(s.as_str())),
         Some(v) => Err(format!("config.{k}: expected string, got {v}")),
     }
 }
@@ -125,8 +126,12 @@ impl Config {
             )?,
             allow_spend_locator: opt_bool(o, "allow_spend_locator", d.allow_spend_locator)?,
             http_timeout_ms,
-            zksign_vk_path: opt_str(o, "zksign_vk_path")?.filter(|s| !s.is_empty()),
-            audit_log: opt_str(o, "audit_log")?.filter(|s| !s.is_empty()),
+            zksign_vk_path: opt_str(o, "zksign_vk_path")?
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+            audit_log: opt_str(o, "audit_log")?
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
         })
     }
 }

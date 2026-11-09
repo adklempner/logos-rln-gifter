@@ -45,6 +45,7 @@ pub mod testing {
         pub immutable: Vec<Value>,
         /// The node's `/wallet/sign/zk` reply as recorded (`{"sig": {…}}`).
         pub sign_reply: Value,
+        // OWNERSHIP: RefCell because `NodeApi` takes `&self` and the fake records calls.
         pub last_sign: RefCell<Option<SignRequest>>,
         /// Every `immutable_blocks` range requested, in order.
         pub ranges: RefCell<Vec<(u64, u64)>>,
@@ -90,11 +91,9 @@ pub mod testing {
                     n.blocks
                         .insert(id.to_ascii_lowercase(), read_json(&ent.path())?);
                 } else if let Some(id) = stem.strip_prefix("events_") {
-                    let v = read_json(&ent.path())?;
-                    let arr = v
-                        .as_array()
-                        .cloned()
-                        .ok_or_else(|| format!("{name}: expected array"))?;
+                    let Value::Array(arr) = read_json(&ent.path())? else {
+                        return Err(format!("{name}: expected array"));
+                    };
                     n.events.insert(id.to_ascii_lowercase(), arr);
                 }
             }
@@ -109,17 +108,21 @@ pub mod testing {
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             if immutable {
+                // OWNERSHIP: the block is served from two collections; each owns a copy.
                 self.immutable.push(block.clone());
             }
+            // OWNERSHIP: the id keys two maps.
             self.blocks.insert(id.clone(), block);
             self.events.insert(id, events);
         }
 
         pub fn last_sign(&self) -> Option<SignRequest> {
+            // OWNERSHIP: a value out of the RefCell; a borrow cannot outlive its guard.
             self.last_sign.borrow().clone()
         }
     }
 
+    // OWNERSHIP: `NodeApi` returns owned values (an HTTP node parses fresh ones); the fake copies its fixtures.
     impl NodeApi for FakeNode {
         fn pow_status(&self) -> Result<Value, String> {
             Ok(self.pow_status.clone())

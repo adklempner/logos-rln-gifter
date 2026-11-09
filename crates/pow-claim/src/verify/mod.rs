@@ -25,6 +25,7 @@ pub use ticket::puzzle_ticket;
 pub fn check(nodes: &[&dyn NodeApi], claim: &Claim, cfg: &Config) -> Result<ClaimCheck, String> {
     let t0 = Instant::now();
     let mut rec = audit::Record {
+        // OWNERSHIP: `Record` owns its fields (public audit type); `cfg` keeps the URL.
         node: cfg.node_url.clone(),
         nullifier: Some(hex::encode(claim.evidence.pow_nullifier)),
         ..Default::default()
@@ -36,6 +37,7 @@ pub fn check(nodes: &[&dyn NodeApi], claim: &Claim, cfg: &Config) -> Result<Clai
             rec.path = Some(path.as_str());
         }
     }
+    // OWNERSHIP: `audit::record` takes the owned verdict shape; `r` is returned to the caller.
     let verdict = match &r {
         Ok(c) => Ok(c.outcome.clone().map(|_| ())),
         Err(e) => Err(e.clone()),

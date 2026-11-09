@@ -52,6 +52,7 @@ impl PreparedVk {
 static DEFAULT_VK: OnceLock<Result<PreparedVk, String>> = OnceLock::new();
 
 /// The bundled VK, prepared on first use.
+// OWNERSHIP: a static-lifetime borrow of the process-wide prepared VK; a cached error is copied out.
 pub fn default_vk() -> Result<&'static PreparedVk, String> {
     DEFAULT_VK
         .get_or_init(|| PreparedVk::from_json(DEFAULT_VK_JSON))
@@ -64,21 +65,26 @@ type VkKey = (String, Option<std::time::SystemTime>, u64);
 /// A VK file prepared once per (path, mtime, len), so a VK replaced in place
 /// is picked up on the next request without re-parsing on every call.
 pub fn vk_from_path_cached(path: &str) -> Result<Arc<PreparedVk>, String> {
+    // OWNERSHIP: process-wide cache; Mutex for concurrent verifiers, Arc so an evicted VK stays
+    // alive for the requests still holding it.
     static CACHE: OnceLock<Mutex<HashMap<VkKey, Arc<PreparedVk>>>> = OnceLock::new();
     let meta = std::fs::metadata(path).map_err(|e| format!("config.zksign_vk_path {path}: {e}"))?;
     let key: VkKey = (path.to_string(), meta.modified().ok(), meta.len());
     let cache = CACHE.get_or_init(Default::default);
     if let Some(v) = cache.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
+        // OWNERSHIP: cheap Arc handle clone.
         return Ok(v.clone());
     }
     let v = Arc::new(PreparedVk::from_path(path)?);
     let mut c = cache.lock().unwrap_or_else(|p| p.into_inner());
     c.retain(|(p, _, _), _| p != path);
+    // OWNERSHIP: cheap Arc handle clone; the cache and the caller each hold one.
     c.insert(key, v.clone());
     Ok(v)
 }
 
 /// The VK a verifier uses: the bundled one or an operator's file.
+// OWNERSHIP: the bundled VK is a static-lifetime borrow of DEFAULT_VK; a file VK is a cache Arc handle.
 pub enum VkSource {
     Default(&'static PreparedVk),
     File(Arc<PreparedVk>),

@@ -24,6 +24,8 @@ pub enum Outcome<T> {
 /// `Err` = operator/host error (envelope); `Ok(Reject)` = refused input.
 pub type Check<T> = Result<Outcome<T>, String>;
 
+// OWNERSHIP: a boxed `dyn Any` erases each piece's own config / evidence type at the
+// plugin boundary; the flow only hands it back to the piece that made it.
 /// Operator configuration an authoriser parsed, opaque to the flow.
 pub type Cfg = Box<dyn Any + Send + Sync>;
 /// Evidence an authoriser decoded from the payload, opaque to the flow.
@@ -31,11 +33,14 @@ pub type Evidence = Box<dyn Any + Send + Sync>;
 
 /// Who signed. `canonical` is the lowercase form an operator writes in an
 /// allowlist and the default nullifier.
+// OWNERSHIP: identities cross the plugin boundary as boxed `dyn Identity`; the `Any`
+// supertrait (hence a static lifetime) lets an authoriser downcast to its scheme's type.
 pub trait Identity: Any + Send + Sync {
     fn canonical(&self) -> String;
     fn as_any(&self) -> &dyn Any;
 }
 
+// OWNERSHIP: `downcast_ref` needs `T: Any`, which implies a static lifetime.
 pub fn downcast_identity<T: 'static>(id: &dyn Identity) -> Option<&T> {
     id.as_any().downcast_ref::<T>()
 }
@@ -44,12 +49,14 @@ pub fn downcast_identity<T: 'static>(id: &dyn Identity) -> Option<&T> {
 /// payload: the libp2p peer id behind the secure channel the request arrived
 /// on (the gifter reads it from the accepted stream). A scheme that signs
 /// nothing takes its proven identity from here.
+// OWNERSHIP: borrows the host's peer id for one verify call.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Transport<'a> {
     pub peer_id: Option<&'a str>,
 }
 
 /// A scheme part split off the front of the payload body.
+// OWNERSHIP: `part` and `rest` borrow the payload body (zero-copy split).
 pub struct Decoded<'a> {
     /// The identity the part names, when it carries one (a public key); the
     /// flow checks it against the identity the signature proves. `None` when
@@ -62,6 +69,7 @@ pub struct Decoded<'a> {
 }
 
 /// How a binding digest gets signed, and which identity that proves.
+// OWNERSHIP: names are compile-time constants (static str); `decode` borrows the body it splits.
 pub trait Scheme: Send + Sync {
     fn name(&self) -> &'static str;
     /// What an identity of this scheme is called in reasons ("address",
@@ -96,6 +104,7 @@ pub trait Scheme: Send + Sync {
 
 /// The produce half of a scheme: holds (or reaches) the key. `args` is the
 /// request's opaque `args` (a key override, a node URL …).
+// OWNERSHIP: the scheme name is a compile-time constant (static str).
 pub trait Signer: Send + Sync {
     fn scheme(&self) -> &'static str;
     /// The scheme part for this binding and digest.
@@ -106,6 +115,8 @@ pub trait Signer: Send + Sync {
 }
 
 /// How an identity gets accepted, and what evidence that takes.
+// OWNERSHIP: the name is a compile-time constant (static str); `audience` borrows the config and
+// `decode_evidence` the bytes it splits.
 pub trait Authoriser: Send + Sync {
     fn name(&self) -> &'static str;
     /// Which schemes' identities this authoriser can judge.
@@ -132,6 +143,7 @@ pub trait Authoriser: Send + Sync {
 }
 
 /// The produce half of an authoriser: gathers the evidence to bind.
+// OWNERSHIP: the authoriser name is a compile-time constant (static str).
 pub trait Claimant: Send + Sync {
     fn authoriser(&self) -> &'static str;
     fn accepts(&self, scheme: &str) -> bool;

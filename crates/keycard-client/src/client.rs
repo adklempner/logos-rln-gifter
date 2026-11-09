@@ -209,6 +209,7 @@ impl Keycard {
             INS_OPEN_SECURE_CHANNEL,
             self.pairing_index,
             0,
+            // OWNERSHIP: `Command` owns its data; the session keeps the key for a repeated open.
             self.sc.eph_pub.clone(),
         ))?;
         if resp.sw != SW_OK {

@@ -28,6 +28,7 @@ pub struct Found {
 
 fn candidate_keys(node: &dyn NodeApi, args: &ProduceArgs) -> Result<Vec<String>, String> {
     if let Some(k) = &args.claim_address {
+        // OWNERSHIP: `args` is borrowed; the key list is owned (node keys are built fresh).
         return Ok(vec![k.clone()]);
     }
     let st = node.pow_status()?;
@@ -52,6 +53,15 @@ fn nullifier_of(ev: &Value) -> Option<String> {
     tx_event(ev)["payload"]["PoWRewardClaimed"]["pow_nullifier"]
         .as_str()
         .map(str::to_ascii_lowercase)
+}
+
+/// [`tx_event`] of an owned event, moved out: the `Tx` member if `ev` is an
+/// object holding one, else `ev` itself.
+fn into_tx_event(ev: Value) -> Value {
+    match ev {
+        Value::Object(mut m) => m.remove("Tx").unwrap_or(Value::Object(m)),
+        other => other,
+    }
 }
 
 fn block_id(b: &Value) -> Result<String, String> {
@@ -87,7 +97,7 @@ fn scan_block(
                 block_id: id,
                 slot: block_slot(block),
                 nullifier: nul,
-                event: tx_event(&ev).clone(),
+                event: into_tx_event(ev),
             }));
         }
     }
@@ -113,13 +123,14 @@ pub fn discover(node: &dyn NodeApi, args: &ProduceArgs) -> Result<Found, String>
             .ok_or_else(|| format!("no PoWRewardClaimed with nullifier {nul} in block {bid}"))?;
         let (k, path) = owner(&ev, &block, &ks)
             .ok_or_else(|| format!("claim {nul} in block {bid} is not owned by any of {ks:?}"))?;
+        // OWNERSHIP: `bid` and `nul` borrow `args`; `Found` owns its copies.
         return Ok(Found {
             k,
             path,
             block_id: bid.clone(),
             slot: block_slot(&block),
             nullifier: nul.clone(),
-            event: tx_event(&ev).clone(),
+            event: into_tx_event(ev),
         });
     }
 

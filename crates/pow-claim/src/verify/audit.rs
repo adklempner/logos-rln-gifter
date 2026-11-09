@@ -22,8 +22,8 @@ pub fn record(
 ) {
     let (verdict, reason) = match result {
         Ok(Ok(())) => ("accept", None),
-        Ok(Err(r)) => ("reject", Some(r.clone())),
-        Err(e) => ("error", Some(e.clone())),
+        Ok(Err(r)) => ("reject", Some(r.as_str())),
+        Err(e) => ("error", Some(e.as_str())),
     };
     let nul = rec.nullifier.as_deref().unwrap_or("-");
     let path = rec.path.unwrap_or("-");
@@ -31,7 +31,6 @@ pub fn record(
         "pow_claim_auth: verdict={verdict} node={} nullifier={nul} path={path} reason={} ms={ms}",
         if rec.node.is_empty() { "-" } else { &rec.node },
         reason
-            .as_deref()
             .map(|r| format!("{r:?}"))
             .unwrap_or_else(|| "-".into()),
     );

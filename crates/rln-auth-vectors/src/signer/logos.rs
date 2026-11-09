@@ -72,6 +72,7 @@ impl NodeArgs {
 /// `/pow/status` auto-claim target.
 pub fn resolve_key(node: &dyn ZkNode, args: &NodeArgs) -> Result<(String, &'static str), String> {
     if let Some(k) = &args.public_key {
+        // OWNERSHIP: `args` is borrowed; the resolved key is owned (the node path builds a new one).
         return Ok((k.clone(), "args"));
     }
     let st = node.pow_status()?;
@@ -102,6 +103,7 @@ pub fn resolve_key(node: &dyn ZkNode, args: &NodeArgs) -> Result<(String, &'stat
 /// Builds the node client per request from `args` (the module), or uses a
 /// fixed one (tests).
 pub struct LogosSigner {
+    // OWNERSHIP: a fixed node (tests) or none (HTTP per request); boxed for the static-lifetime registry.
     pub node: Option<Box<dyn ZkNode + Send + Sync>>,
 }
 
@@ -117,6 +119,7 @@ impl LogosSigner {
         match &self.node {
             Some(n) => f(n.as_ref()),
             None => f(&HttpZkNode {
+                // OWNERSHIP: `HttpZkNode` (zksign-light, public) owns its URL; `args` is borrowed.
                 url: args.node_url.clone(),
                 timeout_ms: args.http_timeout_ms,
             }),

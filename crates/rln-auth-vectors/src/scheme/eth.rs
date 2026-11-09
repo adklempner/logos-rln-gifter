@@ -20,6 +20,7 @@ pub struct EthAddress(pub String);
 
 impl Identity for EthAddress {
     fn canonical(&self) -> String {
+        // OWNERSHIP: `canonical` returns an owned String (trait signature).
         self.0.clone()
     }
     fn as_any(&self) -> &dyn Any {

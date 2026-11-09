@@ -46,16 +46,17 @@ impl Default for ProduceArgs {
     }
 }
 
-fn opt_str(o: &serde_json::Map<String, Value>, k: &str) -> Result<Option<String>, String> {
+// OWNERSHIP: the result borrows `o`'s string; callers build the owned form they keep.
+fn opt_str<'a>(o: &'a serde_json::Map<String, Value>, k: &str) -> Result<Option<&'a str>, String> {
     match o.get(k) {
         None | Some(Value::Null) => Ok(None),
-        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(Value::String(s)) => Ok(Some(s.as_str())),
         Some(v) => Err(format!("{k}: expected string, got {v}")),
     }
 }
 
 fn opt_hex(o: &serde_json::Map<String, Value>, k: &str) -> Result<Option<String>, String> {
-    opt_str(o, k)?.map(|s| norm_hex32(k, &s)).transpose()
+    opt_str(o, k)?.map(|s| norm_hex32(k, s)).transpose()
 }
 
 fn opt_u64(o: &serde_json::Map<String, Value>, k: &str, d: u64) -> Result<u64, String> {
