@@ -310,7 +310,7 @@ mod tests {
             .claimant(NoClaim("list"))
             .claimant(StampClaim)
     }
-    fn produce(auth_type: &str, args: Value) -> String {
+    fn produce(auth_type: &str, args: &Value) -> String {
         let req =
             json!({ "auth_type": auth_type, "id_commitment_hex": "11".repeat(32), "args": args });
         let out: Value =
@@ -320,7 +320,7 @@ mod tests {
             .unwrap_or_else(|| panic!("{out}"))
             .to_string()
     }
-    fn verify(auth_type: &str, payload_hex: &str, rate: u64, config: Value) -> Value {
+    fn verify(auth_type: &str, payload_hex: &str, rate: u64, config: &Value) -> Value {
         let req = json!({
             "auth_type": auth_type, "payload_hex": payload_hex,
             "id_commitment_hex": "11".repeat(32), "rate": rate, "config": config
@@ -345,17 +345,17 @@ mod tests {
 
     #[test]
     fn produce_then_verify_round_trips_both_authorisers() {
-        let p = produce("toy-list", json!({ "rate_max": 50 }));
-        let v = verify("toy-list", &p, 50, listed());
+        let p = produce("toy-list", &json!({ "rate_max": 50 }));
+        let v = verify("toy-list", &p, 50, &listed());
         assert_eq!(v["ok"], true, "{v}");
         assert_eq!(v["nullifier"], hex::encode(KEY));
 
-        let p = produce("toy-stamp", json!({ "audience": "stamped" }));
-        let v = verify("toy-stamp", &format!("0x{p}"), 100, json!({}));
+        let p = produce("toy-stamp", &json!({ "audience": "stamped" }));
+        let v = verify("toy-stamp", &format!("0x{p}"), 100, &json!({}));
         assert_eq!(v["ok"], true, "{v}");
         assert_eq!(v["nullifier"], format!("{}:stamped", hex::encode(KEY)));
-        let p = produce("alt-list", json!({}));
-        assert_eq!(verify("alt-list", &p, 1, listed())["ok"], true);
+        let p = produce("alt-list", &json!({}));
+        assert_eq!(verify("alt-list", &p, 1, &listed())["ok"], true);
     }
 
     #[test]
@@ -401,51 +401,51 @@ mod tests {
 
     #[test]
     fn operator_mistakes_are_errors_requester_mistakes_are_rejects() {
-        let p = produce("toy-list", json!({}));
-        let v = verify("toy-list", &p, 1, json!({}));
+        let p = produce("toy-list", &json!({}));
+        let v = verify("toy-list", &p, 1, &json!({}));
         assert!(
             v["error"].as_str().unwrap().contains("config.allowlist"),
             "{v}"
         );
-        let v = verify("toy-stamp", &p, 1, json!({ "broken": 1 }));
+        let v = verify("toy-stamp", &p, 1, &json!({ "broken": 1 }));
         assert!(
             v["error"].as_str().unwrap().contains("operator mistake"),
             "{v}"
         );
 
-        let v = verify("toy-list", "zz", 1, listed());
+        let v = verify("toy-list", "zz", 1, &listed());
         assert!(
             v["reason"].as_str().unwrap().starts_with("payload hex:"),
             "{v}"
         );
-        let v = verify("toy-list", "02", 1, listed());
+        let v = verify("toy-list", "02", 1, &listed());
         assert!(v["reason"].as_str().unwrap().contains("too short"), "{v}");
         let mut old = hex::decode(&p).unwrap();
         old[0] = 1;
-        let v = verify("toy-list", &hex::encode(&old), 1, listed());
+        let v = verify("toy-list", &hex::encode(&old), 1, &listed());
         assert_eq!(v["reason"], "payload version 1, want 2");
         let mut long = hex::decode(&p).unwrap();
         long.insert(34, 0);
-        let v = verify("toy-list", &hex::encode(&long), 1, listed());
+        let v = verify("toy-list", &hex::encode(&long), 1, &listed());
         assert_eq!(v["reason"], "payload has 1 trailing bytes");
     }
 
     #[test]
     fn rate_above_the_signed_rate_max_is_rejected() {
-        let p = produce("toy-list", json!({ "rate_max": 10 }));
-        assert_eq!(verify("toy-list", &p, 10, listed())["ok"], true);
-        let v = verify("toy-list", &p, 11, listed());
+        let p = produce("toy-list", &json!({ "rate_max": 10 }));
+        assert_eq!(verify("toy-list", &p, 10, &listed())["ok"], true);
+        let v = verify("toy-list", &p, 11, &listed());
         assert_eq!(v["reason"], "rate 11 exceeds the signed rate_max 10");
     }
 
     #[test]
     fn a_wrong_signature_audience_or_evidence_is_rejected() {
-        let p = produce("toy-list", json!({ "audience": "a" }));
+        let p = produce("toy-list", &json!({ "audience": "a" }));
         let v = verify(
             "toy-list",
             &p,
             1,
-            json!({ "allowlist": [hex::encode(KEY)], "audience": "b" }),
+            &json!({ "allowlist": [hex::encode(KEY)], "audience": "b" }),
         );
         assert_eq!(v["reason"], reason::SIG_FAILED, "{v}");
         let mut tampered = hex::decode(&p).unwrap();
@@ -454,15 +454,15 @@ mod tests {
             "toy-list",
             &hex::encode(&tampered),
             1,
-            json!({ "allowlist": [hex::encode(KEY)], "audience": "a" }),
+            &json!({ "allowlist": [hex::encode(KEY)], "audience": "a" }),
         );
         assert_eq!(v["reason"], reason::SIG_FAILED);
 
         let p = produce(
             "toy-stamp",
-            json!({ "audience": "stamped", "stamp": "xxxx" }),
+            &json!({ "audience": "stamped", "stamp": "xxxx" }),
         );
-        let v = verify("toy-stamp", &p, 1, json!({}));
+        let v = verify("toy-stamp", &p, 1, &json!({}));
         assert_eq!(
             v["reason"], "bad stamp",
             "the evidence verified (it is bound) but is refused"
@@ -472,14 +472,14 @@ mod tests {
     #[test]
     fn before_sig_judges_the_claim_first_otherwise_the_proof() {
         // list (before_sig): an unlisted claim is refused before the bad signature is noticed.
-        let p = produce("toy-list", json!({}));
+        let p = produce("toy-list", &json!({}));
         let mut tampered = hex::decode(&p).unwrap();
         tampered[33] ^= 0xff;
         let v = verify(
             "toy-list",
             &hex::encode(&tampered),
             1,
-            json!({ "allowlist": ["00".repeat(32)] }),
+            &json!({ "allowlist": ["00".repeat(32)] }),
         );
         assert!(
             v["reason"].as_str().unwrap().contains("not allowlisted"),
@@ -488,11 +488,11 @@ mod tests {
         // stamp (after): the signature is checked first.
         let p = produce(
             "toy-stamp",
-            json!({ "audience": "stamped", "stamp": "xxxx" }),
+            &json!({ "audience": "stamped", "stamp": "xxxx" }),
         );
         let mut tampered = hex::decode(&p).unwrap();
         tampered[33] ^= 0xff;
-        let v = verify("toy-stamp", &hex::encode(&tampered), 1, json!({}));
+        let v = verify("toy-stamp", &hex::encode(&tampered), 1, &json!({}));
         assert_eq!(v["reason"], reason::SIG_FAILED);
     }
 

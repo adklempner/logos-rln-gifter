@@ -74,12 +74,12 @@ fn producers() -> ProduceRegistry {
         .claimant(PowClaimant::http())
 }
 
-fn produce(auth_type: &str, args: Value) -> Value {
+fn produce(auth_type: &str, args: &Value) -> Value {
     let req = json!({ "auth_type": auth_type, "id_commitment_hex": IDC, "args": args });
     serde_json::from_str(&dispatch_produce(&req.to_string(), &producers())).unwrap()
 }
 
-fn verify(auth_type: &str, payload_hex: &str, rate: u64, config: Value) -> Value {
+fn verify(auth_type: &str, payload_hex: &str, rate: u64, config: &Value) -> Value {
     verify_from(auth_type, payload_hex, rate, config, None)
 }
 
@@ -87,7 +87,7 @@ fn verify_from(
     auth_type: &str,
     payload_hex: &str,
     rate: u64,
-    config: Value,
+    config: &Value,
     peer_id: Option<&str>,
 ) -> Value {
     let mut req = json!({
@@ -135,32 +135,32 @@ fn the_registries_compose_exactly_the_twelve_vectors() {
 #[test]
 fn peer_any_is_the_transports_identity_once_per_peer() {
     // The produced payload is the bare frame: nothing signed, nothing bound.
-    let p = produce("peer-any", json!({ "rate_max": 100 }));
+    let p = produce("peer-any", &json!({ "rate_max": 100 }));
     let payload = p["payload_hex"].as_str().unwrap_or_else(|| panic!("{p}"));
     assert_eq!(payload, "026400000000000000");
     let hexid = parse_peer_id(PEER_B58).unwrap();
 
-    let v = verify_from("peer-any", payload, 100, json!({}), Some(PEER_B58));
+    let v = verify_from("peer-any", payload, 100, &json!({}), Some(PEER_B58));
     assert_eq!(v["ok"], true, "{v}");
     assert_eq!(v["nullifier"], hexid);
     // The same payload from another peer is that peer's claim, not a replay.
-    let v = verify_from("peer-any", payload, 100, json!({}), Some(OTHER_PEER_B58));
+    let v = verify_from("peer-any", payload, 100, &json!({}), Some(OTHER_PEER_B58));
     assert_eq!(v["nullifier"], parse_peer_id(OTHER_PEER_B58).unwrap());
     // Without a transport peer id the host is misconfigured: the envelope.
-    let v = verify("peer-any", payload, 100, json!({}));
+    let v = verify("peer-any", payload, 100, &json!({}));
     assert_eq!(v["error"], reason::TRANSPORT_PEER_UNKNOWN);
     // The frame's rate_max still caps the settled rate.
-    let v = verify_from("peer-any", payload, 101, json!({}), Some(PEER_B58));
+    let v = verify_from("peer-any", payload, 101, &json!({}), Some(PEER_B58));
     assert_eq!(reason_of(&v), "rate 101 exceeds the signed rate_max 100");
-    let v = verify_from("peer-any", "0200", 100, json!({}), Some(PEER_B58));
+    let v = verify_from("peer-any", "0200", 100, &json!({}), Some(PEER_B58));
     assert!(reason_of(&v).contains("too short"), "{v}");
     // The payload identity of a signing scheme is still what `any` nullifies.
-    let p = produce("eth-any", json!({}));
+    let p = produce("eth-any", &json!({}));
     let v = verify(
         "eth-any",
         p["payload_hex"].as_str().unwrap(),
         100,
-        json!({ "audience": "" }),
+        &json!({ "audience": "" }),
     );
     assert_eq!(v["ok"], true, "{v}");
     assert_eq!(v["nullifier"], ADDR42);
@@ -175,7 +175,7 @@ fn peer_allowlist_lists_peer_ids_in_either_spelling() {
             "peer-allowlist",
             payload,
             100,
-            json!({ "allowlist": [entry] }),
+            &json!({ "allowlist": [entry] }),
             Some(PEER_B58),
         );
         assert_eq!(v["ok"], true, "{v}");
@@ -185,7 +185,7 @@ fn peer_allowlist_lists_peer_ids_in_either_spelling() {
         "peer-allowlist",
         payload,
         100,
-        json!({ "allowlist": [OTHER_PEER_B58] }),
+        &json!({ "allowlist": [OTHER_PEER_B58] }),
         Some(PEER_B58),
     );
     assert_eq!(reason_of(&v), format!("peer not allowlisted: {hexid}"));
@@ -193,7 +193,7 @@ fn peer_allowlist_lists_peer_ids_in_either_spelling() {
         "peer-allowlist",
         payload,
         100,
-        json!({ "allowlist": ["zz"] }),
+        &json!({ "allowlist": ["zz"] }),
         Some(PEER_B58),
     );
     assert!(v["error"].as_str().unwrap().contains("'zz'"), "{v}");
@@ -201,13 +201,13 @@ fn peer_allowlist_lists_peer_ids_in_either_spelling() {
 
 #[test]
 fn eth_allowlist_round_trips_and_matches_foundry() {
-    let p = produce("eth-allowlist", json!({ "rate_max": 100 }));
+    let p = produce("eth-allowlist", &json!({ "rate_max": 100 }));
     let payload = p["payload_hex"].as_str().unwrap_or_else(|| panic!("{p}"));
     let v = verify(
         "eth-allowlist",
         payload,
         100,
-        json!({ "allowlist": [ADDR42.to_uppercase().replace("0X", "0x")] }),
+        &json!({ "allowlist": [ADDR42.to_uppercase().replace("0X", "0x")] }),
     );
     assert_eq!(v["ok"], true, "{v}");
     assert_eq!(v["nullifier"], ADDR42);
@@ -218,7 +218,7 @@ fn eth_allowlist_round_trips_and_matches_foundry() {
         "eth-allowlist",
         &format!("0x{}", hex::encode(framed)),
         100,
-        json!({ "allowlist": [ADDR42] }),
+        &json!({ "allowlist": [ADDR42] }),
     );
     assert_eq!(v["ok"], true, "{v}");
 
@@ -226,18 +226,18 @@ fn eth_allowlist_round_trips_and_matches_foundry() {
         "eth-allowlist",
         payload,
         100,
-        json!({ "allowlist": ["0x0000000000000000000000000000000000000001"] }),
+        &json!({ "allowlist": ["0x0000000000000000000000000000000000000001"] }),
     );
     assert_eq!(reason_of(&v), format!("address not allowlisted: {ADDR42}"));
-    let v = verify("eth-allowlist", payload, 100, json!({ "allowlist": [] }));
+    let v = verify("eth-allowlist", payload, 100, &json!({ "allowlist": [] }));
     assert_eq!(v["error"], reason::ALLOWLIST_EMPTY);
-    let v = verify("eth-allowlist", payload, 100, json!({}));
+    let v = verify("eth-allowlist", payload, 100, &json!({}));
     assert!(v["error"].as_str().unwrap().contains("required"), "{v}");
     let v = verify(
         "eth-allowlist",
         payload,
         100,
-        json!({ "allowlist": ["0x1234"] }),
+        &json!({ "allowlist": ["0x1234"] }),
     );
     assert!(v["error"].as_str().unwrap().contains("\"0x1234\""), "{v}");
 }
@@ -246,7 +246,7 @@ fn eth_allowlist_round_trips_and_matches_foundry() {
 fn lez_allowlist_round_trips_with_hex_or_base58_entries() {
     let p = produce(
         "lez-allowlist",
-        json!({ "rate_max": 10, "audience": "gifter-1" }),
+        &json!({ "rate_max": 10, "audience": "gifter-1" }),
     );
     let payload = p["payload_hex"].as_str().unwrap_or_else(|| panic!("{p}"));
     for entry in [PK0_ACCT_HEX, PK0_ACCT_B58] {
@@ -254,7 +254,7 @@ fn lez_allowlist_round_trips_with_hex_or_base58_entries() {
             "lez-allowlist",
             payload,
             10,
-            json!({ "allowlist": [entry], "audience": "gifter-1" }),
+            &json!({ "allowlist": [entry], "audience": "gifter-1" }),
         );
         assert_eq!(v["ok"], true, "{v}");
         assert_eq!(v["nullifier"], PK0_ACCT_HEX);
@@ -263,39 +263,44 @@ fn lez_allowlist_round_trips_with_hex_or_base58_entries() {
         "lez-allowlist",
         payload,
         11,
-        json!({ "allowlist": [PK0_ACCT_HEX], "audience": "gifter-1" }),
+        &json!({ "allowlist": [PK0_ACCT_HEX], "audience": "gifter-1" }),
     );
     assert_eq!(reason_of(&v), "rate 11 exceeds the signed rate_max 10");
     let v = verify(
         "lez-allowlist",
         payload,
         10,
-        json!({ "allowlist": [PK0_ACCT_HEX], "audience": "other" }),
+        &json!({ "allowlist": [PK0_ACCT_HEX], "audience": "other" }),
     );
     assert_eq!(reason_of(&v), reason::SIG_FAILED);
     let v = verify(
         "lez-allowlist",
         payload,
         10,
-        json!({ "allowlist": ["00".repeat(32)], "audience": "gifter-1" }),
+        &json!({ "allowlist": ["00".repeat(32)], "audience": "gifter-1" }),
     );
     assert!(reason_of(&v).starts_with("account not allowlisted"), "{v}");
 }
 
 #[test]
 fn logos_allowlist_checks_membership_before_the_proof() {
-    let p = produce("logos-allowlist", json!({}));
+    let p = produce("logos-allowlist", &json!({}));
     let payload = p["payload_hex"].as_str().unwrap_or_else(|| panic!("{p}"));
     assert_eq!(&payload[2..66], K, "K leads the part");
     // Listed: the fake proof then fails verification.
-    let v = verify("logos-allowlist", payload, 100, json!({ "allowlist": [K] }));
+    let v = verify(
+        "logos-allowlist",
+        payload,
+        100,
+        &json!({ "allowlist": [K] }),
+    );
     assert!(reason_of(&v).contains("zkSign signature invalid"), "{v}");
     // Unlisted: refused before any proof work.
     let v = verify(
         "logos-allowlist",
         payload,
         100,
-        json!({ "allowlist": [hex::encode(zksign_light::zero_pk_le())] }),
+        &json!({ "allowlist": [hex::encode(zksign_light::zero_pk_le())] }),
     );
     assert_eq!(reason_of(&v), format!("public key not allowlisted: {K}"));
     // A big-endian key in the allowlist is an operator mistake.
@@ -303,7 +308,7 @@ fn logos_allowlist_checks_membership_before_the_proof() {
         "logos-allowlist",
         payload,
         100,
-        json!({ "allowlist": ["ff".repeat(32)] }),
+        &json!({ "allowlist": ["ff".repeat(32)] }),
     );
     assert!(
         v["error"].as_str().unwrap().contains("big-endian paste"),
@@ -313,7 +318,7 @@ fn logos_allowlist_checks_membership_before_the_proof() {
         "logos-allowlist",
         payload,
         100,
-        json!({ "allowlist": [K], "zksign_vk_path": "/nonexistent/vk.json" }),
+        &json!({ "allowlist": [K], "zksign_vk_path": "/nonexistent/vk.json" }),
     );
     assert!(
         v["error"].as_str().unwrap().contains("zksign_vk_path"),
@@ -345,7 +350,7 @@ fn logos_pow_claim_binds_the_claim_nullifier_and_needs_the_logos_scheme() {
 
     let cfg =
         json!({ "node_url": "http://127.0.0.1:1", "audience": "poc", "http_timeout_ms": 300 });
-    let v = verify("logos-pow-claim", &payload, 100, cfg.clone());
+    let v = verify("logos-pow-claim", &payload, 100, &cfg);
     assert!(
         reason_of(&v).contains("zkSign signature invalid"),
         "evidence decoded, digest bound, proof refused: {v}"
@@ -354,14 +359,14 @@ fn logos_pow_claim_binds_the_claim_nullifier_and_needs_the_logos_scheme() {
         "logos-pow-claim",
         &payload,
         100,
-        json!({ "audience": "poc" }),
+        &json!({ "audience": "poc" }),
     );
     assert!(v["error"].as_str().unwrap().contains("node_url"), "{v}");
     let short = hex::encode(frame(&part, &evidence[..10], 100));
-    let v = verify("logos-pow-claim", &short, 100, cfg);
+    let v = verify("logos-pow-claim", &short, 100, &cfg);
     assert!(reason_of(&v).starts_with("evidence:"), "{v}");
 
-    let v = verify("eth-pow-claim", &payload, 100, json!({}));
+    let v = verify("eth-pow-claim", &payload, 100, &json!({}));
     assert!(
         v["error"]
             .as_str()
@@ -388,7 +393,7 @@ fn keycard_allowlist_judges_the_card_before_its_signature() {
         "keycard-allowlist",
         &payload,
         100,
-        json!({ "allowlist": [TEST_CA] }),
+        &json!({ "allowlist": [TEST_CA] }),
     );
     assert_eq!(reason_of(&v), format!("card not allowlisted: {IDENT_PUB}"));
     // Listed: the golden attestation signed a v1 challenge, not this binding.
@@ -396,7 +401,7 @@ fn keycard_allowlist_judges_the_card_before_its_signature() {
         "keycard-allowlist",
         &payload,
         100,
-        json!({ "allowlist": [IDENT_PUB] }),
+        &json!({ "allowlist": [IDENT_PUB] }),
     );
     assert!(
         reason_of(&v).starts_with("attestation verification failed"),
@@ -406,7 +411,7 @@ fn keycard_allowlist_judges_the_card_before_its_signature() {
         "keycard-allowlist",
         "a0",
         100,
-        json!({ "allowlist": [IDENT_PUB] }),
+        &json!({ "allowlist": [IDENT_PUB] }),
     );
     assert!(
         reason_of(&v).contains("too short")
@@ -460,7 +465,7 @@ fn attestation_trusts_the_ca_that_signed_the_card_key() {
         "keycard-attestation",
         &hex::encode(frame(&hex::decode(GOLDEN_TLV).unwrap(), &[], 100)),
         100,
-        json!({ "trusted_cas": [TEST_CA] }),
+        &json!({ "trusted_cas": [TEST_CA] }),
     );
     assert!(
         reason_of(&v).starts_with("attestation verification failed"),
@@ -470,7 +475,7 @@ fn attestation_trusts_the_ca_that_signed_the_card_key() {
         "eth-attestation",
         "00",
         100,
-        json!({ "trusted_cas": [TEST_CA] }),
+        &json!({ "trusted_cas": [TEST_CA] }),
     );
     assert!(
         v["error"]

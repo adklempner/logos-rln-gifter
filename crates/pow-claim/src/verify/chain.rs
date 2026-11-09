@@ -23,7 +23,7 @@ pub struct ClaimCheck {
     pub outcome: Result<Path, String>,
 }
 
-fn node_err(e: String) -> String {
+fn node_err(e: &str) -> String {
     format!("node unreachable or failing: {e}")
 }
 
@@ -81,14 +81,14 @@ fn run(
     let nul = p.evidence.pow_nullifier;
 
     // 3. LIB.
-    let info = node.info().map_err(node_err)?;
+    let info = node.info().map_err(|e| node_err(&e))?;
     let lib_slot = info["cryptarchia_info"]["lib_slot"]
         .as_u64()
         .ok_or_else(|| format!("node /cryptarchia/info: no cryptarchia_info.lib_slot in {info}"))?;
     *lib_out = Some(lib_slot);
 
     // 4. Claim block known and final.
-    let Some(block) = node.block(&bid).map_err(node_err)? else {
+    let Some(block) = node.block(&bid).map_err(|e| node_err(&e))? else {
         reject!("claim block unknown to node: {bid}");
     };
     if !block["header"]["id"]
@@ -105,7 +105,7 @@ fn run(
     }
 
     // 5. Canonical: in the immutable chain at its slot.
-    let imm = node.immutable_blocks(s, s).map_err(node_err)?;
+    let imm = node.immutable_blocks(s, s).map_err(|e| node_err(&e))?;
     if !imm.iter().any(|b| {
         b["header"]["id"]
             .as_str()
@@ -115,7 +115,7 @@ fn run(
     }
 
     // 6. The PoWRewardClaimed event for this nullifier.
-    let events = node.events(&bid).map_err(node_err)?;
+    let events = node.events(&bid).map_err(|e| node_err(&e))?;
     let Some(ev) = events
         .iter()
         .map(tx_event)

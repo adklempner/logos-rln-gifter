@@ -172,7 +172,7 @@ pub(crate) mod tests {
         }
     }
     pub(crate) const K: &str = "e3635f207984ae779cf76b5f20714b514373f61ff96260879fe0a6d71f2dce07";
-    pub(crate) fn fake(targets: Vec<&str>) -> FakeNode {
+    pub(crate) fn fake(targets: &[&str]) -> FakeNode {
         let t: Vec<Value> = targets.iter().map(|k| json!({ "public_key": k })).collect();
         FakeNode {
             status: json!({ "auto_claim": { "targets": t } }),
@@ -202,16 +202,16 @@ pub(crate) mod tests {
             .unwrap_err()
             .starts_with("public_key"));
 
-        let n = fake(vec![K]);
+        let n = fake(&[K]);
         assert_eq!(
             resolve_key(&n, &NodeArgs::default()).unwrap(),
             (K.to_string(), "pow_status")
         );
         assert_eq!(resolve_key(&n, &a).unwrap().1, "args");
-        assert!(resolve_key(&fake(vec![]), &NodeArgs::default())
+        assert!(resolve_key(&fake(&[]), &NodeArgs::default())
             .unwrap_err()
             .contains("no /pow/status"));
-        assert!(resolve_key(&fake(vec![K, K]), &NodeArgs::default())
+        assert!(resolve_key(&fake(&[K, K]), &NodeArgs::default())
             .unwrap_err()
             .contains("2 /pow/status"));
     }
@@ -219,7 +219,7 @@ pub(crate) mod tests {
     #[test]
     fn signer_builds_the_part_from_the_node() {
         let s = LogosSigner {
-            node: Some(Box::new(fake(vec![K]))),
+            node: Some(Box::new(fake(&[K]))),
         };
         let b = Binding {
             id_commitment: [1; 32],

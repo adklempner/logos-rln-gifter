@@ -54,7 +54,7 @@ fn setup() -> (FakeNode, Claim) {
     (n, p)
 }
 
-fn cfg(extra: Value) -> Config {
+fn cfg(extra: &Value) -> Config {
     let mut c = json!({"node_url": "http://fake"});
     for (k, v) in extra.as_object().unwrap() {
         c[k] = v.clone();
@@ -65,7 +65,7 @@ fn cfg(extra: Value) -> Config {
 #[test]
 fn path_a_direct_accepts() {
     let (n, p) = setup();
-    let c = check_claim(&[&n], &p, &cfg(json!({}))).unwrap();
+    let c = check_claim(&[&n], &p, &cfg(&json!({}))).unwrap();
     assert_eq!(c.outcome, Ok(Path::Direct));
     assert_eq!(c.lib_slot, Some(SLOT + 10));
 }
@@ -73,7 +73,7 @@ fn path_a_direct_accepts() {
 #[test]
 fn direct_ownership_disabled_rejects() {
     let (n, p) = setup();
-    let c = check_claim(&[&n], &p, &cfg(json!({"allow_direct_ownership": false}))).unwrap();
+    let c = check_claim(&[&n], &p, &cfg(&json!({"allow_direct_ownership": false}))).unwrap();
     let r = c.outcome.unwrap_err();
     assert!(r.contains("direct ownership is disabled"), "{r}");
 }
@@ -81,9 +81,9 @@ fn direct_ownership_disabled_rejects() {
 #[test]
 fn direct_min_payout_rejects() {
     let (n, p) = setup();
-    let c = check_claim(&[&n], &p, &cfg(json!({"min_payout": 1001}))).unwrap();
+    let c = check_claim(&[&n], &p, &cfg(&json!({"min_payout": 1001}))).unwrap();
     assert!(c.outcome.is_err());
-    let c = check_claim(&[&n], &p, &cfg(json!({"min_payout": 1000}))).unwrap();
+    let c = check_claim(&[&n], &p, &cfg(&json!({"min_payout": 1000}))).unwrap();
     assert_eq!(c.outcome, Ok(Path::Direct));
 }
 
@@ -91,15 +91,15 @@ fn direct_min_payout_rejects() {
 fn other_k_rejects() {
     let (n, mut p) = setup();
     p.k[1] = 1;
-    let c = check_claim(&[&n], &p, &cfg(json!({}))).unwrap();
+    let c = check_claim(&[&n], &p, &cfg(&json!({}))).unwrap();
     assert!(c.outcome.unwrap_err().contains("does not own"));
 }
 
 #[test]
 fn node_count_checks() {
     let (n, p) = setup();
-    assert!(check_claim(&[], &p, &cfg(json!({}))).is_err());
-    assert!(check_claim(&[&n, &n], &p, &cfg(json!({})))
+    assert!(check_claim(&[], &p, &cfg(&json!({}))).is_err());
+    assert!(check_claim(&[&n, &n], &p, &cfg(&json!({})))
         .unwrap_err()
         .contains("unsupported"));
 }
@@ -113,10 +113,10 @@ fn garbage_chain_json_never_panics() {
         {"opcode": 0, "payload": {"inputs": [1, null], "outputs": "x"}},
         "junk"
     ]}}]);
-    let c = check_claim(&[&n], &p, &cfg(json!({}))).unwrap();
+    let c = check_claim(&[&n], &p, &cfg(&json!({}))).unwrap();
     assert!(c.outcome.unwrap_err().contains("ticket"));
     n.events
         .insert(BID.into(), vec![json!(null), json!({"Tx": 3})]);
-    let c = check_claim(&[&n], &p, &cfg(json!({}))).unwrap();
+    let c = check_claim(&[&n], &p, &cfg(&json!({}))).unwrap();
     assert!(c.outcome.is_err());
 }

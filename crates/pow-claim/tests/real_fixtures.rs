@@ -18,7 +18,7 @@ fn s(v: &Value) -> String {
     v.as_str().unwrap().to_string()
 }
 
-fn args(extra: Value) -> ProduceArgs {
+fn args(extra: &Value) -> ProduceArgs {
     let m = meta();
     let mut a = json!({"audience": m["audience"], "rate_max": m["rate_max"]});
     for (k, v) in extra.as_object().unwrap() {
@@ -31,7 +31,7 @@ fn args(extra: Value) -> ProduceArgs {
 fn real_gather_finds_the_recorded_claim() {
     let m = meta();
     let n = FakeNode::from_dir(dir()).unwrap();
-    let c = gather(&n, &args(json!({}))).unwrap();
+    let c = gather(&n, &args(&json!({}))).unwrap();
     assert_eq!(hex::encode(c.k), s(&m["k"]));
     assert_eq!(
         hex::encode(c.evidence.claim_block_id),
@@ -106,7 +106,7 @@ fn real_discovery_uses_immutable_range() {
     let m = meta();
     let slot = m["slot"].as_u64().unwrap();
     let n = FakeNode::from_dir(dir()).unwrap();
-    gather(&n, &args(json!({}))).unwrap();
+    gather(&n, &args(&json!({}))).unwrap();
     let ranges = n.ranges.borrow();
     assert!(!ranges.is_empty());
     assert!(
@@ -121,7 +121,7 @@ fn real_pinned_mode_matches() {
     let n = FakeNode::from_dir(dir()).unwrap();
     let c = gather(
         &n,
-        &args(json!({
+        &args(&json!({
             "claim_block_id": m["claim_block_id"], "pow_nullifier": m["pow_nullifier"],
         })),
     )
@@ -143,7 +143,7 @@ fn real_excluded_nullifier_yields_not_found() {
     let n = FakeNode::from_dir(dir()).unwrap();
     let e = gather(
         &n,
-        &args(json!({
+        &args(&json!({
             "exclude_nullifiers": [m["pow_nullifier"]], "allow_unfinal": false,
         })),
     )

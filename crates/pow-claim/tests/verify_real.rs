@@ -55,13 +55,13 @@ fn base_cfg() -> Value {
     json!({"node_url": "http://fake", "audience": "poc"})
 }
 
-fn run_cfg(n: &FakeNode, cfg: Value) -> Result<Result<(), String>, String> {
-    let c = Config::parse(Some(&cfg)).unwrap();
+fn run_cfg(n: &FakeNode, cfg: &Value) -> Result<Result<(), String>, String> {
+    let c = Config::parse(Some(cfg)).unwrap();
     check_claim(&[n], &claim(), &c).map(|c| c.outcome.map(|_| ()))
 }
 
 fn run(n: &FakeNode) -> Result<Result<(), String>, String> {
-    run_cfg(n, base_cfg())
+    run_cfg(n, &base_cfg())
 }
 
 #[track_caller]
@@ -157,7 +157,7 @@ fn real_accepts_via_spent_to_and_records_the_decision() {
 fn real_accepts_exact_min_payout() {
     let mut cfg = base_cfg();
     cfg["min_payout"] = json!(999108);
-    assert_eq!(run_cfg(&node(), cfg), Ok(Ok(())));
+    assert_eq!(run_cfg(&node(), &cfg), Ok(Ok(())));
 }
 
 // ---- rejects: chain ----
@@ -240,7 +240,7 @@ fn reject_transfer_input_changed_front_run() {
 fn reject_min_payout_above_output() {
     let mut cfg = base_cfg();
     cfg["min_payout"] = json!(999109);
-    assert_reject(run_cfg(&node(), cfg), "does not own");
+    assert_reject(run_cfg(&node(), &cfg), "does not own");
 }
 
 #[test]
