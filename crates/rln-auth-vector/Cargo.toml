@@ -1,6 +1,6 @@
 [package]
 name = "rln_auth_vector"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Contract kit for RLN gifter auth vectors: the produce/verify JSON shapes, the signed binding, and the scheme × authoriser composition shared by the gifter and every vector module"
 license = "MIT OR Apache-2.0"
