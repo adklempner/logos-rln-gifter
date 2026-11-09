@@ -6,8 +6,6 @@
 // persists them.
 // FEATURE: RLN gifter auth vectors (verify)
 
-use std::sync::OnceLock;
-
 use rln_auth_vector::{dispatch_verify, VerifyRegistry};
 use rln_auth_vectors::authoriser::{Allowlist, Any, Attestation, PowClaim};
 use rln_auth_vectors::scheme::{Eth, Keycard, Lez, Logos, Peer};
@@ -59,33 +57,35 @@ pub struct RustModuleContext {
     pub instance_persistence_path: String,
 }
 
-fn registry() -> &'static VerifyRegistry {
-    static R: OnceLock<VerifyRegistry> = OnceLock::new();
-    R.get_or_init(|| {
-        VerifyRegistry::new()
-            .scheme(Eth)
-            .scheme(Lez)
-            .scheme(Logos)
-            .scheme(Keycard)
-            .scheme(Peer)
-            .authoriser(Allowlist)
-            .authoriser(Any)
-            .authoriser(Attestation)
-            .authoriser(PowClaim)
-    })
+struct RlnAuth {
+    registry: VerifyRegistry,
 }
 
-#[derive(Default)]
-struct RlnAuth {}
+impl Default for RlnAuth {
+    fn default() -> Self {
+        Self {
+            registry: VerifyRegistry::new()
+                .scheme(Eth)
+                .scheme(Lez)
+                .scheme(Logos)
+                .scheme(Keycard)
+                .scheme(Peer)
+                .authoriser(Allowlist)
+                .authoriser(Any)
+                .authoriser(Attestation)
+                .authoriser(PowClaim),
+        }
+    }
+}
 
 impl RlnAuthModule for RlnAuth {
     // Plain String (not Result): codegen maps Result to LogosResult, which the
     // host nulls through the UI bridge; errors travel as {"error":...}.
     fn verify_auth(&mut self, args_json: String) -> String {
-        dispatch_verify(&args_json, registry())
+        dispatch_verify(&args_json, &self.registry)
     }
     fn supported_auth_types(&mut self) -> String {
-        serde_json::to_string(&registry().auth_types()).unwrap_or_else(|_| "[]".into())
+        serde_json::to_string(&self.registry.auth_types()).unwrap_or_else(|_| "[]".into())
     }
 }
 
