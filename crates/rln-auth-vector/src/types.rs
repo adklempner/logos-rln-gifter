@@ -21,6 +21,17 @@ pub struct ProduceRequest {
     pub args: Option<Value>,
 }
 
+/// [`ProduceRequest`] over borrowed fields, for callers that send a request
+/// without copying them; serialises to the same JSON.
+// OWNERSHIP: borrows the caller's fields for one serialisation; never stored.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ProduceRequestRef<'a> {
+    pub auth_type: &'a str,
+    pub id_commitment_hex: &'a str,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<&'a Value>,
+}
+
 /// `produce_auth` output: the payload bytes, hex-encoded.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProduceReply {
@@ -45,6 +56,22 @@ pub struct VerifyRequest {
     pub config: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peer_id: Option<String>,
+}
+
+/// [`VerifyRequest`] over borrowed fields, for callers that send a request
+/// without copying them; serialises to the same JSON.
+// OWNERSHIP: borrows the caller's fields for one serialisation; never stored.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct VerifyRequestRef<'a> {
+    pub auth_type: &'a str,
+    pub payload_hex: &'a str,
+    pub id_commitment_hex: &'a str,
+    #[serde(default)]
+    pub rate: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<&'a Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_id: Option<&'a str>,
 }
 
 /// `verify_auth` output. A refusal is `ok: false` + `reason` — still a
@@ -148,6 +175,69 @@ mod tests {
         });
         let back: VerifyRequest = serde_json::from_value(min).unwrap();
         assert_eq!(back.rate, 0);
+    }
+
+    #[test]
+    fn produce_request_ref_serialises_like_the_owned_request() {
+        let args = serde_json::json!({ "rate_max": 7, "audience": "a\"b", "nested": [1, null] });
+        for args in [Some(&args), None] {
+            // OWNERSHIP: the owned twin needs its own copy of the same data.
+            let owned = ProduceRequest {
+                auth_type: "t-a".into(),
+                id_commitment_hex: "0x01".into(),
+                args: args.cloned(),
+            };
+            let borrowed = ProduceRequestRef {
+                auth_type: "t-a",
+                id_commitment_hex: "0x01",
+                args,
+            };
+            assert_eq!(
+                serde_json::to_string(&borrowed).unwrap(),
+                serde_json::to_string(&owned).unwrap()
+            );
+            assert_eq!(
+                serde_json::to_value(borrowed).unwrap(),
+                serde_json::to_value(&owned).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn verify_request_ref_serialises_like_the_owned_request() {
+        let config = serde_json::json!({ "allowlist": ["k"], "audience": "é" });
+        for (config, peer_id) in [
+            (Some(&config), Some("12D3KooW")),
+            (Some(&config), None),
+            (None, Some("12D3KooW")),
+            (None, None),
+        ] {
+            // OWNERSHIP: the owned twin needs its own copy of the same data.
+            let owned = VerifyRequest {
+                auth_type: "t-a".into(),
+                payload_hex: "aa".into(),
+                id_commitment_hex: "bb".into(),
+                rate: 42,
+                config: config.cloned(),
+                peer_id: peer_id.map(str::to_owned),
+            };
+            let borrowed = VerifyRequestRef {
+                auth_type: "t-a",
+                payload_hex: "aa",
+                id_commitment_hex: "bb",
+                rate: 42,
+                config,
+                peer_id,
+            };
+            assert_eq!(
+                serde_json::to_string(&borrowed).unwrap(),
+                serde_json::to_string(&owned).unwrap()
+            );
+            assert_eq!(
+                serde_json::to_value(borrowed).unwrap(),
+                serde_json::to_value(&owned).unwrap()
+            );
+        }
     }
 
     #[test]

@@ -48,5 +48,5 @@ pub use pieces::{
 pub use registry::{dispatch_produce, dispatch_verify, ProduceRegistry, VerifyRegistry};
 pub use types::{
     namespaced_nullifier, parse_produce_reply, parse_verdict, ProduceReply, ProduceRequest,
-    Verdict, VerifyRequest, PRODUCE_METHOD, VERIFY_METHOD,
+    ProduceRequestRef, Verdict, VerifyRequest, VerifyRequestRef, PRODUCE_METHOD, VERIFY_METHOD,
 };
