@@ -10,6 +10,7 @@ use rln_auth_vector::{dispatch_verify, VerifyRegistry};
 use rln_auth_vectors::authoriser::{Allowlist, Any, Attestation, PowClaim};
 use rln_auth_vectors::scheme::{Eth, Keycard, Lez, Logos, Peer};
 
+// OWNERSHIP: the generated host keeps the instance in a process-lifetime any-box, so the module owns all its data.
 pub trait RlnAuthModule: Send + 'static {
     /// rln_auth_vector VERIFY_METHOD. One JSON-string arg (VerifyRequest);
     /// `auth_type` is `<scheme>-<authoriser>` over the schemes eth, lez,
