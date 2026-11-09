@@ -116,6 +116,7 @@ const BN254_R_BE: [u8; 32] = [
 /// gifter check before any verifier call or chain round-trip. The strings
 /// mirror the lez module's kind so a caller can match `invalid_commitment`
 /// whichever side refused.
+// OWNERSHIP: every refusal is a string literal.
 pub fn commitment_refusal(bytes: &[u8]) -> Option<&'static str> {
     if bytes.len() != 32 {
         return Some("identity_commitment must be 32 bytes");
@@ -228,6 +229,7 @@ enum FieldVal<'a> {
 // Walks length-delimited (wire 2) and varint (wire 0) fields — the only two the
 // gifter schema uses. `f` receives each (field_number, value); a malformed frame
 // returns Err.
+// OWNERSHIP: each value `f` receives borrows `buf`.
 fn walk_fields<'a, F: FnMut(u64, FieldVal<'a>)>(buf: &'a [u8], mut f: F) -> Result<(), String> {
     let mut i = 0usize;
     while i < buf.len() {

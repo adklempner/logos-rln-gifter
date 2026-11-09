@@ -79,6 +79,8 @@ impl ServerCfg {
     fn resolve_registry(&self, requested: Option<&str>) -> Result<(String, u64), String> {
         let registry = match requested.map(str::trim).filter(|s| !s.is_empty()) {
             Some(r) => canonical_account(r).map_err(|e| format!("registry: {e}"))?,
+            // OWNERSHIP: the resolved registry is owned (a requested one is
+            // canonicalised into a new String), so the default is a copy.
             None => self.default_config.clone(),
         };
         match self.registries.get(&registry) {
@@ -100,6 +102,7 @@ fn parse_registries(
     let mut order = Vec::new();
     let mut add = |config: &str, cap: u64| -> Result<(), String> {
         let key = canonical_account(config).map_err(|e| format!("registries: {e}"))?;
+        // OWNERSHIP: the map and the order list each keep the key.
         if map
             .insert(
                 key.clone(),
@@ -405,6 +408,8 @@ pub fn serve(state: &mut ServeState, args_json: &str) -> Result<Value, String> {
         Some(_) => return Err("advertiseAddrs must be an array of multiaddr strings".into()),
     };
     let (registries, served) = parse_registries(&a, config, max_rate_limit)?;
+    // OWNERSHIP: the stored config keeps its own default; `served` stays for
+    // the advertisement pairs and the reply.
     let default_config = served[0].clone();
 
     // A present-but-malformed authVerifiers must fail serve, never silently
@@ -421,6 +426,8 @@ pub fn serve(state: &mut ServeState, args_json: &str) -> Result<Value, String> {
                 // Open the verifier's lp client HERE, on the owner thread —
                 // the serve worker cannot create clients, only use them.
                 lp::ensure_client(module).map_err(|e| format!("authVerifiers['{atype}']: {e}"))?;
+                // OWNERSHIP: the stored config outlives the parsed args; the
+                // type, module and opaque config are copied out of them.
                 auth_verifiers.insert(
                     atype.clone(),
                     (module.to_string(), v.get("config").cloned()),
@@ -444,6 +451,7 @@ pub fn serve(state: &mut ServeState, args_json: &str) -> Result<Value, String> {
     lock(&NULLIFIERS)
         .open(nullifiers_path)
         .map_err(|e| format!("nullifier store: {e}"))?;
+    // OWNERSHIP: shared by every request that starts under this config.
     *lock(&SERVER) = Some(Arc::new(ServerCfg {
         default_config,
         registries,

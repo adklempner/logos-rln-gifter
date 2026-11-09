@@ -319,6 +319,8 @@ pub fn call_json(
     }
 
     let (tx, rx) = std::sync::mpsc::channel::<(bool, String)>();
+    // OWNERSHIP: the reply box belongs to the host until reply_trampoline
+    // reclaims it; a refused dispatch reclaims it below.
     let user_data = Box::into_raw(Box::new(AsyncReply { tx })) as *mut c_void;
     let rc = unsafe {
         ffi::lp_invoke_async(
