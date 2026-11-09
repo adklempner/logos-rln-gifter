@@ -47,14 +47,20 @@ pub fn derive_session_keys(
     card_data: &[u8],
 ) -> ([u8; 32], [u8; 32], [u8; 16]) {
     let salt = &card_data[..32];
-    let iv: [u8; 16] = card_data[32..48].try_into().unwrap();
+    let iv: [u8; 16] = card_data[32..48]
+        .try_into()
+        .expect("invariant: a 16-byte range converts to [u8; 16]");
     let mut h = Sha512::new();
     h.update(secret);
     h.update(pairing_key);
     h.update(salt);
     let data = h.finalize();
-    let enc: [u8; 32] = data[..32].try_into().unwrap();
-    let mac: [u8; 32] = data[32..64].try_into().unwrap();
+    let enc: [u8; 32] = data[..32]
+        .try_into()
+        .expect("invariant: SHA-512 output is 64 bytes");
+    let mac: [u8; 32] = data[32..64]
+        .try_into()
+        .expect("invariant: SHA-512 output is 64 bytes");
     (enc, mac, iv)
 }
 
@@ -117,17 +123,20 @@ fn cbc_decrypt_raw(cipher: &Aes256, iv: &[u8], data: &[u8]) -> Vec<u8> {
 }
 
 pub fn encrypt_data(data: &[u8], enc_key: &[u8], iv: &[u8]) -> Vec<u8> {
-    let cipher = Aes256::new_from_slice(enc_key).unwrap();
+    let cipher = Aes256::new_from_slice(enc_key)
+        .expect("invariant: secure-channel keys are 32 bytes (derive_session_keys)");
     cbc_encrypt_raw(&cipher, iv, &append_padding(data))
 }
 
 pub fn decrypt_data(data: &[u8], enc_key: &[u8], iv: &[u8]) -> Vec<u8> {
-    let cipher = Aes256::new_from_slice(enc_key).unwrap();
+    let cipher = Aes256::new_from_slice(enc_key)
+        .expect("invariant: secure-channel keys are 32 bytes (derive_session_keys)");
     remove_padding(&cbc_decrypt_raw(&cipher, iv, data))
 }
 
 pub fn calculate_mac(meta: &[u8; 16], data: &[u8], mac_key: &[u8]) -> [u8; 16] {
-    let cipher = Aes256::new_from_slice(mac_key).unwrap();
+    let cipher = Aes256::new_from_slice(mac_key)
+        .expect("invariant: secure-channel keys are 32 bytes (derive_session_keys)");
     let mut buf = meta.to_vec();
     buf.extend_from_slice(&append_padding(data));
     let ct = cbc_encrypt_raw(&cipher, &[0u8; 16], &buf);

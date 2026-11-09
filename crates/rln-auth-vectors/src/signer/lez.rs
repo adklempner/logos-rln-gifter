@@ -39,9 +39,12 @@ impl LezKey {
     /// whether or not BIP-340 normalises the scalar to even Y).
     pub fn xonly(&self) -> [u8; 32] {
         let pk = SecretKey::from_slice(&self.0)
-            .expect("validated")
+            .expect("invariant: LezKey holds a valid scalar (checked by parse, made by random)")
             .public_key();
-        (*pk.to_encoded_point(false).x().expect("not identity")).into()
+        (*pk.to_encoded_point(false)
+            .x()
+            .expect("invariant: a public key is never the identity point"))
+        .into()
     }
 
     /// `{"account_id","account_id_base58","public_key"}`.

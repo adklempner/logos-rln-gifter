@@ -83,7 +83,9 @@ impl Scheme for Lez {
             ));
         }
         let (part, rest) = body.split_at(PART_LEN);
-        let xonly: [u8; 32] = part[..32].try_into().expect("32 bytes");
+        let xonly: [u8; 32] = part[..32]
+            .try_into()
+            .expect("invariant: a 32-byte range converts to [u8; 32]");
         Outcome::Ok(Decoded {
             claimed: Some(Box::new(LezAccount(hex::encode(account_id(&xonly))))),
             part,
@@ -109,7 +111,9 @@ impl Scheme for Lez {
         if vk.verify_prehash(digest, &sig).is_err() {
             return Ok(Outcome::Reject(reason::SIG_FAILED.into()));
         }
-        let xonly: [u8; 32] = d.part[..32].try_into().expect("32 bytes");
+        let xonly: [u8; 32] = d.part[..32]
+            .try_into()
+            .expect("invariant: a 32-byte range converts to [u8; 32]");
         Ok(Outcome::Ok(Box::new(LezAccount(hex::encode(account_id(
             &xonly,
         ))))))

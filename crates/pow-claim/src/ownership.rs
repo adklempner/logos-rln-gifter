@@ -96,7 +96,7 @@ mod strict {
         fr.into_bigint()
             .to_bytes_le()
             .try_into()
-            .expect("Fr fits in 32 bytes")
+            .expect("invariant: a BN254 Fr is 32 bytes little-endian")
     }
 }
 

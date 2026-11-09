@@ -27,7 +27,10 @@ pub fn unframe(bytes: &[u8]) -> Outcome<(&[u8], u64)> {
         ));
     }
     let (body, tail) = bytes[1..].split_at(bytes.len() - 9);
-    Outcome::Ok((body, u64::from_le_bytes(tail.try_into().expect("8 bytes"))))
+    let tail: [u8; 8] = tail
+        .try_into()
+        .expect("invariant: the split leaves an 8-byte tail");
+    Outcome::Ok((body, u64::from_le_bytes(tail)))
 }
 
 #[cfg(test)]

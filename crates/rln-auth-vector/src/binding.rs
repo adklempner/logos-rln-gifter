@@ -123,7 +123,8 @@ impl Binding {
 /// (empty for most). The length byte keeps `audience ‖ extra` unambiguous.
 pub fn binding_digest(t: &AuthType, b: &Binding, extra: &[u8]) -> [u8; 32] {
     let a = b.audience.as_bytes();
-    let len = u8::try_from(a.len()).expect("audience <= 255 bytes");
+    let len = u8::try_from(a.len())
+        .expect("invariant: audience is at most MAX_AUDIENCE_LEN bytes (parse_audience)");
     let mut h = Sha256::new();
     h.update(t.domain());
     h.update(b.id_commitment);

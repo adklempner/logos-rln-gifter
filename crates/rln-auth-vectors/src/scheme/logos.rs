@@ -89,8 +89,12 @@ impl Scheme for Logos {
         let vk = cfg
             .downcast_ref::<zksign_light::VkSource>()
             .ok_or("logos scheme: config is not a VkSource")?;
-        let k: [u8; 32] = d.part[..32].try_into().expect("32 bytes");
-        let sig: [u8; 128] = d.part[32..160].try_into().expect("128 bytes");
+        let k: [u8; 32] = d.part[..32]
+            .try_into()
+            .expect("invariant: a 32-byte range converts to [u8; 32]");
+        let sig: [u8; 128] = d.part[32..160]
+            .try_into()
+            .expect("invariant: a 128-byte range converts to [u8; 128]");
         if k == zksign_light::zero_pk_le() {
             return Ok(Outcome::Reject("public key is the zero key".into()));
         }
