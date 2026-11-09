@@ -94,12 +94,24 @@ impl ServerCfg {
 /// `serve`'s registries: the default `config` plus each `registries` entry
 /// (`"<config>"` with the global cap, or `{"config", "maxRateLimit"?}`), as
 /// canonical accounts, in order; a repeated one is an operator mistake.
-fn parse_registries(a: &Value, default_config: &str, global_cap: u64) -> Result<(HashMap<String, RegistryCfg>, Vec<String>), String> {
+fn parse_registries(
+    a: &Value,
+    default_config: &str,
+    global_cap: u64,
+) -> Result<(HashMap<String, RegistryCfg>, Vec<String>), String> {
     let mut map = HashMap::new();
     let mut order = Vec::new();
     let mut add = |config: &str, cap: u64| -> Result<(), String> {
         let key = canonical_account(config).map_err(|e| format!("registries: {e}"))?;
-        if map.insert(key.clone(), RegistryCfg { max_rate_limit: cap }).is_some() {
+        if map
+            .insert(
+                key.clone(),
+                RegistryCfg {
+                    max_rate_limit: cap,
+                },
+            )
+            .is_some()
+        {
             return Err(format!("registries: {key} is listed twice"));
         }
         order.push(key);
@@ -113,18 +125,30 @@ fn parse_registries(a: &Value, default_config: &str, global_cap: u64) -> Result<
                 match item {
                     Value::String(s) => add(s, global_cap)?,
                     Value::Object(o) => {
-                        let config = o.get("config").and_then(Value::as_str).ok_or("registries: an object entry needs a config")?;
+                        let config = o
+                            .get("config")
+                            .and_then(Value::as_str)
+                            .ok_or("registries: an object entry needs a config")?;
                         let cap = match o.get("maxRateLimit") {
                             None | Some(Value::Null) => global_cap,
-                            Some(v) => v.as_u64().ok_or("registries: maxRateLimit must be an unsigned integer")?,
+                            Some(v) => v
+                                .as_u64()
+                                .ok_or("registries: maxRateLimit must be an unsigned integer")?,
                         };
                         add(config, cap)?;
                     }
-                    _ => return Err(r#"registries must be an array of "<config>" | {config, maxRateLimit?}"#.into()),
+                    _ => return Err(
+                        r#"registries must be an array of "<config>" | {config, maxRateLimit?}"#
+                            .into(),
+                    ),
                 }
             }
         }
-        Some(_) => return Err(r#"registries must be an array of "<config>" | {config, maxRateLimit?}"#.into()),
+        Some(_) => {
+            return Err(
+                r#"registries must be an array of "<config>" | {config, maxRateLimit?}"#.into(),
+            )
+        }
     }
     Ok((map, order))
 }
@@ -166,7 +190,10 @@ fn blob(v: Value) -> Value {
 
 /// The (registry, auth type) pairs a configuration serves, in the order
 /// `serve` lists its registries; an open allocator serves the empty type.
-fn served_pairs(served: &[String], auth_verifiers: &HashMap<String, (String, Option<Value>)>) -> Vec<(String, String)> {
+fn served_pairs(
+    served: &[String],
+    auth_verifiers: &HashMap<String, (String, Option<Value>)>,
+) -> Vec<(String, String)> {
     let mut types: Vec<&str> = auth_verifiers.keys().map(String::as_str).collect();
     types.sort_unstable();
     if types.is_empty() {
@@ -183,8 +210,12 @@ fn served_pairs(served: &[String], auth_verifiers: &HashMap<String, (String, Opt
 fn create_xpr(addrs: &[String], data: &str, seq_no: u64) -> Result<String, String> {
     let mut services = serde_json::Map::new();
     services.insert(RLN_GIFTER_SERVICE_ID.to_string(), lp::bstr(data.as_bytes()));
-    let v = lp::call_libp2p("createXpr", &json!([addrs, services, seq_no]), ADVERTISE_TIMEOUT_MS)
-        .map_err(|e| format!("createXpr: {e}"))?;
+    let v = lp::call_libp2p(
+        "createXpr",
+        &json!([addrs, services, seq_no]),
+        ADVERTISE_TIMEOUT_MS,
+    )
+    .map_err(|e| format!("createXpr: {e}"))?;
     v.as_str()
         .filter(|s| !s.is_empty())
         .map(str::to_owned)
@@ -206,8 +237,12 @@ fn reconcile_advertisement(renew: bool, peers: usize) -> Result<(), String> {
         return Ok(());
     }
     if current.is_some() {
-        lp::call_libp2p("discoStopAdvertising", &json!([RLN_GIFTER_SERVICE_ID]), ADVERTISE_TIMEOUT_MS)
-            .map_err(|e| format!("discoStopAdvertising: {e}"))?;
+        lp::call_libp2p(
+            "discoStopAdvertising",
+            &json!([RLN_GIFTER_SERVICE_ID]),
+            ADVERTISE_TIMEOUT_MS,
+        )
+        .map_err(|e| format!("discoStopAdvertising: {e}"))?;
         *current = None;
     }
     if let Some(spec) = wanted {
@@ -294,11 +329,25 @@ fn advertisement_tick() -> Result<(), String> {
 ///  serviceId?, serviceData?, advertisedToPeers?, advertiseError?}`.
 pub fn serve(args_json: &str) -> Result<Value, String> {
     let a: Value = serde_json::from_str(args_json).map_err(|e| format!("serve args: {e}"))?;
-    let config = a.get("config").and_then(Value::as_str).ok_or("missing config")?.to_string();
-    let wallet = a.get("wallet").and_then(Value::as_str).ok_or("missing wallet")?.to_string();
-    let max_rate_limit = a.get("maxRateLimit").and_then(Value::as_u64).unwrap_or(DEFAULT_MAX_RATE);
-    let nullifiers_path =
-        a.get("consumedNullifiersPath").and_then(Value::as_str).unwrap_or("").to_string();
+    let config = a
+        .get("config")
+        .and_then(Value::as_str)
+        .ok_or("missing config")?
+        .to_string();
+    let wallet = a
+        .get("wallet")
+        .and_then(Value::as_str)
+        .ok_or("missing wallet")?
+        .to_string();
+    let max_rate_limit = a
+        .get("maxRateLimit")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_MAX_RATE);
+    let nullifiers_path = a
+        .get("consumedNullifiersPath")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let advertise_wanted = match a.get("advertise") {
         None | Some(Value::Null) => None,
         Some(Value::Bool(b)) => Some(*b),
@@ -332,11 +381,15 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
                 // Open the verifier's lp client HERE, on the owner thread —
                 // the serve worker cannot create clients, only use them.
                 lp::ensure_client(module).map_err(|e| format!("authVerifiers['{atype}']: {e}"))?;
-                auth_verifiers
-                    .insert(atype.clone(), (module.to_string(), v.get("config").cloned()));
+                auth_verifiers.insert(
+                    atype.clone(),
+                    (module.to_string(), v.get("config").cloned()),
+                );
             }
         }
-        Some(_) => return Err("authVerifiers must be an object of {type: {module, config?}}".into()),
+        Some(_) => {
+            return Err("authVerifiers must be an object of {type: {module, config?}}".into())
+        }
     }
 
     // Refused before anything is configured: an allocator that cannot say
@@ -353,10 +406,13 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
     {
         let mut g = lock(&CONSUMED_NULLIFIERS);
         let set = g.get_or_insert_with(HashSet::new);
-        set.extend(auth::load_nullifiers(&nullifiers_path).map_err(|e| format!("nullifier store: {e}"))?);
+        set.extend(
+            auth::load_nullifiers(&nullifiers_path).map_err(|e| format!("nullifier store: {e}"))?,
+        );
         let previous_path = lock(&SERVER).as_ref().map(|c| c.nullifiers_path.clone());
         if previous_path.is_some_and(|p| p != nullifiers_path) {
-            auth::append_missing(&nullifiers_path, set).map_err(|e| format!("nullifier store: {e}"))?;
+            auth::append_missing(&nullifiers_path, set)
+                .map_err(|e| format!("nullifier store: {e}"))?;
         }
     }
     *lock(&SERVER) = Some(ServerCfg {
@@ -372,7 +428,10 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
         reply["serviceId"] = json!(RLN_GIFTER_SERVICE_ID);
         reply["serviceData"] = json!(data);
     }
-    let wanted = data.clone().map(|data| AdSpec { data, addrs: advertise_addrs });
+    let wanted = data.clone().map(|data| AdSpec {
+        data,
+        addrs: advertise_addrs,
+    });
     *lock(&WANTED_AD) = wanted.clone();
     if SERVING.load(Ordering::SeqCst) {
         // The worker owns libp2p_module: it reconciles between accepts.
@@ -392,7 +451,11 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
     // Mount exactly once; re-calling serve just refreshes the config above
     // (e.g. a new wallet or verifier set) and the advertisement.
     if !MOUNTED.swap(true, Ordering::SeqCst) {
-        if let Err(e) = lp::call_libp2p("mountProtocol", &json!([RLN_GIFTER_CODEC]), MOUNT_TIMEOUT_MS) {
+        if let Err(e) = lp::call_libp2p(
+            "mountProtocol",
+            &json!([RLN_GIFTER_CODEC]),
+            MOUNT_TIMEOUT_MS,
+        ) {
             MOUNTED.store(false, Ordering::SeqCst);
             return Err(format!("mountProtocol: {e}"));
         }
@@ -411,7 +474,11 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
 /// An explicit `advertise: true` makes a failure the error.
 fn advertise_first(reply: &mut Value, advertise_wanted: Option<bool>) -> Result<(), String> {
     let wanted = lock(&WANTED_AD).is_some();
-    let peers = if wanted { lp::outbound_peers().unwrap_or(0) } else { 0 };
+    let peers = if wanted {
+        lp::outbound_peers().unwrap_or(0)
+    } else {
+        0
+    };
     if wanted {
         reply["advertisedToPeers"] = json!(peers);
     }
@@ -462,7 +529,11 @@ fn worker_loop() {
 
 fn handle_stream(stream_id: u64, peer_id: Option<&str>) -> Result<(), String> {
     let release = || {
-        let _ = lp::call_libp2p("streamReleaseJson", &blob(json!({ "streamId": stream_id })), 10_000);
+        let _ = lp::call_libp2p(
+            "streamReleaseJson",
+            &blob(json!({ "streamId": stream_id })),
+            10_000,
+        );
     };
     // A request that cannot be read still holds a server stream: release it,
     // or every such failure leaks one.
@@ -501,7 +572,9 @@ fn failure_response(request_id: &str, auth_success: bool, message: &str) -> RlnG
         auth_success,
         error: Some(message.to_string()),
         success: None,
-        failure: Some(MembershipAllocationFailure { error_message: message.to_string() }),
+        failure: Some(MembershipAllocationFailure {
+            error_message: message.to_string(),
+        }),
     }
 }
 
@@ -520,7 +593,11 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
     // lez module (a non-canonical commitment panics the guest and the fee is
     // charged).
     if let Some(why) = crate::wire::commitment_refusal(&req.identity_commitment) {
-        return failure_response(&req.request_id, true, &RegisterError::NotSubmitted(why.to_string()).message());
+        return failure_response(
+            &req.request_id,
+            true,
+            &RegisterError::NotSubmitted(why.to_string()).message(),
+        );
     }
 
     let Some(cfg) = lock(&SERVER).clone() else {
@@ -572,7 +649,9 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
         };
         let verify_json = match serde_json::to_string(&verify_req) {
             Ok(s) => s,
-            Err(e) => return failure_response(&req.request_id, false, &format!("verify request: {e}")),
+            Err(e) => {
+                return failure_response(&req.request_id, false, &format!("verify request: {e}"))
+            }
         };
         let reply = match lp::call_module_json(
             module,
@@ -600,7 +679,10 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
             }
         };
         if !verdict.ok {
-            let reason = verdict.reason.as_deref().unwrap_or("verifier rejected the request");
+            let reason = verdict
+                .reason
+                .as_deref()
+                .unwrap_or("verifier rejected the request");
             return failure_response(&req.request_id, false, reason);
         }
         // A verdict nullifier opts in to the shared replay protection:
@@ -670,15 +752,13 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
     }
 
     match register(&cfg, &registry, &req.identity_commitment, rate) {
-        Ok(success) => {
-            RlnGifterResponse {
-                request_id: req.request_id,
-                auth_success: true,
-                error: None,
-                success: Some(success),
-                failure: None,
-            }
-        }
+        Ok(success) => RlnGifterResponse {
+            request_id: req.request_id,
+            auth_success: true,
+            error: None,
+            success: Some(success),
+            failure: None,
+        },
         Err(e) => {
             let mut store_note = String::new();
             if let Some(nul) = &authorized_nullifier {
@@ -731,7 +811,10 @@ impl RegisterError {
 
 /// The usable membership the registry holds for a commitment, as a grant,
 /// or None when there is none (not registered, expired, or unreadable).
-fn registered_membership(registry: &str, id_commitment: &[u8]) -> Option<MembershipAllocationSuccess> {
+fn registered_membership(
+    registry: &str,
+    id_commitment: &[u8],
+) -> Option<MembershipAllocationSuccess> {
     let m = lp::call_module_json(
         lp::LEZ_RLN_MODULE,
         "get_membership",
@@ -775,7 +858,12 @@ fn confirmed_leaf(reply: &Value) -> Option<u64> {
 // a registration whose claims went stale is re-sent by that module under a new
 // transaction. So the leaf reported to the client is read back from the chain.
 // Runs on the serialized worker thread -> lp_invoke_async.
-fn register(cfg: &ServerCfg, registry: &str, id_commitment: &[u8], rate: u64) -> Result<MembershipAllocationSuccess, RegisterError> {
+fn register(
+    cfg: &ServerCfg,
+    registry: &str,
+    id_commitment: &[u8],
+    rate: u64,
+) -> Result<MembershipAllocationSuccess, RegisterError> {
     let idc_hex = hex::encode(id_commitment);
     let reply = lp::call_module_json(
         lp::LEZ_RLN_MODULE,
@@ -789,7 +877,9 @@ fn register(cfg: &ServerCfg, registry: &str, id_commitment: &[u8], rate: u64) ->
     // registry, a payer that cannot pay) and for a send the sequencer did not
     // accept: nothing will land.
     if let Some(why) = refusal(&reply) {
-        return Err(RegisterError::NotSubmitted(format!("register_member refused: {why}")));
+        return Err(RegisterError::NotSubmitted(format!(
+            "register_member refused: {why}"
+        )));
     }
     // A commitment already on this registry: the registry module submits
     // nothing and reports the leaf. A usable membership is the grant; an
@@ -883,13 +973,23 @@ mod tests {
         let m_b58 = "CZ8YUVdk7znjrUmnb5n7kgySk9yRAsQDYmyCxzfSky9t";
         let cfg = served(json!({ "registries": [m_b58, { "config": x, "maxRateLimit": 20 }] }));
         assert_eq!(cfg.resolve_registry(None).unwrap(), (d.clone(), 100));
-        assert_eq!(cfg.resolve_registry(Some(&format!(" {} ", m.to_uppercase()))).unwrap(), (m.clone(), 100));
+        assert_eq!(
+            cfg.resolve_registry(Some(&format!(" {} ", m.to_uppercase())))
+                .unwrap(),
+            (m.clone(), 100)
+        );
         assert_eq!(cfg.resolve_registry(Some(m_b58)).unwrap(), (m.clone(), 100));
         assert_eq!(cfg.resolve_registry(Some(&x)).unwrap(), (x.clone(), 20));
         assert_eq!(cfg.resolve_registry(Some("")).unwrap().0, d);
         let y = acct(0xc);
-        assert_eq!(cfg.resolve_registry(Some(&y)).unwrap_err(), format!("registry not served: {y}"));
-        assert!(cfg.resolve_registry(Some("nope")).unwrap_err().starts_with("registry: config account 'nope'"));
+        assert_eq!(
+            cfg.resolve_registry(Some(&y)).unwrap_err(),
+            format!("registry not served: {y}")
+        );
+        assert!(cfg
+            .resolve_registry(Some("nope"))
+            .unwrap_err()
+            .starts_with("registry: config account 'nope'"));
         let (_, order) = parse_registries(&json!({ "registries": [m_b58] }), &d, 1).unwrap();
         assert_eq!(order, [d.clone(), m]);
         let (_, order) = parse_registries(&json!({}), &d, 1).unwrap();
@@ -900,8 +1000,14 @@ mod tests {
     fn the_served_pairs_are_every_registry_with_every_verifier_type() {
         let (d, m) = (acct(0xd), acct(0xa));
         let mut verifiers = HashMap::new();
-        verifiers.insert("peer-any".to_string(), ("rln_auth_module".to_string(), None));
-        verifiers.insert("eth-allowlist".to_string(), ("rln_auth_module".to_string(), None));
+        verifiers.insert(
+            "peer-any".to_string(),
+            ("rln_auth_module".to_string(), None),
+        );
+        verifiers.insert(
+            "eth-allowlist".to_string(),
+            ("rln_auth_module".to_string(), None),
+        );
         let pairs = served_pairs(&[d.clone(), m.clone()], &verifiers);
         assert_eq!(
             pairs,
@@ -913,7 +1019,10 @@ mod tests {
             ]
         );
         // An open allocator serves the empty type on each registry.
-        assert_eq!(served_pairs(&[d.clone()], &HashMap::new()), [(d, String::new())]);
+        assert_eq!(
+            served_pairs(&[d.clone()], &HashMap::new()),
+            [(d, String::new())]
+        );
     }
 
     #[test]
@@ -930,7 +1039,11 @@ mod tests {
 
     #[test]
     fn serve_rejects_a_non_boolean_advertise() {
-        let e = serve(&format!(r#"{{"config":"{}","wallet":"w","advertise":"yes"}}"#, acct(1))).unwrap_err();
+        let e = serve(&format!(
+            r#"{{"config":"{}","wallet":"w","advertise":"yes"}}"#,
+            acct(1)
+        ))
+        .unwrap_err();
         assert!(e.contains("advertise must be a boolean"), "got: {e}");
     }
 
@@ -939,8 +1052,14 @@ mod tests {
         let (d, m) = (acct(0xd), acct(0xa));
         for (a, needle) in [
             (json!({ "registries": [d.to_uppercase()] }), "listed twice"),
-            (json!({ "registries": [{ "maxRateLimit": 5 }] }), "needs a config"),
-            (json!({ "registries": [{ "config": m, "maxRateLimit": "5" }] }), "unsigned integer"),
+            (
+                json!({ "registries": [{ "maxRateLimit": 5 }] }),
+                "needs a config",
+            ),
+            (
+                json!({ "registries": [{ "config": m, "maxRateLimit": "5" }] }),
+                "unsigned integer",
+            ),
             (json!({ "registries": [7] }), "must be an array"),
             (json!({ "registries": m }), "must be an array"),
             (json!({ "registries": [" "] }), "config account ''"),
@@ -948,7 +1067,9 @@ mod tests {
             let e = parse_registries(&a, &d, 1).unwrap_err();
             assert!(e.contains(needle), "{a}: {e}");
         }
-        assert!(parse_registries(&json!({}), "D", 1).unwrap_err().contains("config account 'D'"));
+        assert!(parse_registries(&json!({}), "D", 1)
+            .unwrap_err()
+            .contains("config account 'D'"));
     }
 
     #[test]
@@ -965,29 +1086,53 @@ mod tests {
         };
         let resp = handle_request(&req.encode(), None);
         assert!(!resp.auth_success);
-        assert_eq!(resp.error.as_deref(), Some(format!("registry not served: {}", acct(0xe)).as_str()));
+        assert_eq!(
+            resp.error.as_deref(),
+            Some(format!("registry not served: {}", acct(0xe)).as_str())
+        );
         *lock(&SERVER) = None;
     }
 
     #[test]
     fn failure_messages_say_whether_anything_was_submitted() {
-        assert_eq!(RegisterError::NotSubmitted("x".into()).message(), "not submitted: x");
-        assert_eq!(RegisterError::Unconfirmed("y".into()).message(), "unconfirmed: y");
+        assert_eq!(
+            RegisterError::NotSubmitted("x".into()).message(),
+            "not submitted: x"
+        );
+        assert_eq!(
+            RegisterError::Unconfirmed("y".into()).message(),
+            "unconfirmed: y"
+        );
     }
 
     #[test]
     fn a_refused_registration_is_recognised() {
         let r = json!({"error": "invalid_commitment: not a BN254 field element"});
-        assert_eq!(refusal(&r), Some("invalid_commitment: not a BN254 field element"));
+        assert_eq!(
+            refusal(&r),
+            Some("invalid_commitment: not a BN254 field element")
+        );
         assert_eq!(refusal(&json!({"leaf_index": 3, "pending": true})), None);
     }
 
     #[test]
     fn only_a_usable_registered_membership_has_a_confirmed_leaf() {
-        assert_eq!(confirmed_leaf(&json!({"registered": true, "leaf_index": 7, "state": "active"})), Some(7));
-        assert_eq!(confirmed_leaf(&json!({"registered": true, "leaf_index": 7, "state": "grace_period"})), Some(7));
-        assert_eq!(confirmed_leaf(&json!({"registered": true, "leaf_index": 7, "state": "expired"})), None);
-        assert_eq!(confirmed_leaf(&json!({"registered": true, "leaf_index": 7})), None);
+        assert_eq!(
+            confirmed_leaf(&json!({"registered": true, "leaf_index": 7, "state": "active"})),
+            Some(7)
+        );
+        assert_eq!(
+            confirmed_leaf(&json!({"registered": true, "leaf_index": 7, "state": "grace_period"})),
+            Some(7)
+        );
+        assert_eq!(
+            confirmed_leaf(&json!({"registered": true, "leaf_index": 7, "state": "expired"})),
+            None
+        );
+        assert_eq!(
+            confirmed_leaf(&json!({"registered": true, "leaf_index": 7})),
+            None
+        );
         assert_eq!(confirmed_leaf(&json!({"registered": false})), None);
         assert_eq!(confirmed_leaf(&json!({"registered": true})), None);
         assert_eq!(confirmed_leaf(&json!("")), None);
@@ -1030,7 +1175,9 @@ mod tests {
     /// outbound peers, signs any record as "XPRB64" and refuses the mount.
     fn scripted_libp2p(peers: impl Fn() -> usize + Send + 'static) {
         lp::fake::install(Box::new(move |_, method, _| match method {
-            "connectedPeers" => Ok(json!((0..peers()).map(|i| format!("P{i}")).collect::<Vec<_>>())),
+            "connectedPeers" => Ok(json!((0..peers())
+                .map(|i| format!("P{i}"))
+                .collect::<Vec<_>>())),
             "createXpr" => Ok(json!({ "success": true, "value": "XPRB64", "error": "" })),
             "discoStartAdvertising" | "discoStopAdvertising" => Ok(json!(true)),
             "mountProtocol" => Err("refused in test".into()),
@@ -1039,7 +1186,10 @@ mod tests {
     }
 
     fn ad_calls() -> Vec<(String, Value)> {
-        lp::fake::calls().into_iter().filter(|(m, _)| m != "connectedPeers").collect()
+        lp::fake::calls()
+            .into_iter()
+            .filter(|(m, _)| m != "connectedPeers")
+            .collect()
     }
 
     #[test]
@@ -1048,10 +1198,16 @@ mod tests {
         reset_ads();
         scripted_libp2p(|| 1);
         let addrs = ["/ip4/203.0.113.7/tcp/4001"];
-        let e = serve(&json!({ "config": acct(1), "wallet": "w", "advertiseAddrs": addrs }).to_string()).unwrap_err();
+        let e = serve(
+            &json!({ "config": acct(1), "wallet": "w", "advertiseAddrs": addrs }).to_string(),
+        )
+        .unwrap_err();
         assert_eq!(e, "mountProtocol: refused in test");
         let data = service_data(&[(acct(1), String::new())]).unwrap();
-        let b64url = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, data.as_bytes());
+        let b64url = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            data.as_bytes(),
+        );
         assert_eq!(
             ad_calls(),
             [
@@ -1059,12 +1215,17 @@ mod tests {
                     "createXpr".to_string(),
                     json!([addrs, { RLN_GIFTER_SERVICE_ID: { "_bytes": b64url } }, lp::fake::START_S])
                 ),
-                ("discoStartAdvertising".to_string(), json!([RLN_GIFTER_SERVICE_ID, data, "XPRB64"])),
+                (
+                    "discoStartAdvertising".to_string(),
+                    json!([RLN_GIFTER_SERVICE_ID, data, "XPRB64"])
+                ),
                 ("mountProtocol".to_string(), json!([RLN_GIFTER_CODEC])),
             ]
         );
         assert_eq!(lp::fake::methods()[0], "connectedPeers");
-        let e = serve(&json!({ "config": acct(1), "wallet": "w", "advertiseAddrs": [7] }).to_string()).unwrap_err();
+        let e =
+            serve(&json!({ "config": acct(1), "wallet": "w", "advertiseAddrs": [7] }).to_string())
+                .unwrap_err();
         assert!(e.contains("advertiseAddrs must be an array"), "got: {e}");
         lp::fake::clear();
         reset_ads();
@@ -1077,7 +1238,13 @@ mod tests {
         scripted_libp2p(|| 1);
         let _ = serve(&json!({ "config": acct(1), "wallet": "w" }).to_string());
         let data = service_data(&[(acct(1), String::new())]).unwrap();
-        assert_eq!(ad_calls()[0], ("discoStartAdvertising".to_string(), json!([RLN_GIFTER_SERVICE_ID, data, ""])));
+        assert_eq!(
+            ad_calls()[0],
+            (
+                "discoStartAdvertising".to_string(),
+                json!([RLN_GIFTER_SERVICE_ID, data, ""])
+            )
+        );
         lp::fake::clear();
         reset_ads();
     }
@@ -1086,7 +1253,10 @@ mod tests {
     fn the_first_advertisement_is_placed_at_once_and_re_placed_when_peers_appear() {
         let _g = lock(&AD_STATE);
         let start = lp::fake::START_S;
-        let spec = AdSpec { data: "1abc".into(), addrs: None };
+        let spec = AdSpec {
+            data: "1abc".into(),
+            addrs: None,
+        };
 
         // Two peers up: placed with them, one peer read, no wait.
         reset_ads();
@@ -1095,7 +1265,10 @@ mod tests {
         let mut reply = json!({});
         advertise_first(&mut reply, None).unwrap();
         assert_eq!(reply, json!({ "advertised": true, "advertisedToPeers": 2 }));
-        assert_eq!(lp::fake::methods(), ["connectedPeers", "discoStartAdvertising"]);
+        assert_eq!(
+            lp::fake::methods(),
+            ["connectedPeers", "discoStartAdvertising"]
+        );
         assert_eq!(lp::now_s(), start);
 
         // libp2p cannot count peers: placed with 0 regardless.
@@ -1126,7 +1299,14 @@ mod tests {
         lp::fake::advance(PEER_CHECK_S);
         advertisement_tick().unwrap();
         let methods: Vec<String> = ad_calls().into_iter().map(|(m, _)| m).collect();
-        assert_eq!(methods, ["discoStartAdvertising", "discoStopAdvertising", "discoStartAdvertising"]);
+        assert_eq!(
+            methods,
+            [
+                "discoStartAdvertising",
+                "discoStopAdvertising",
+                "discoStartAdvertising"
+            ]
+        );
         assert_eq!(lock(&ADVERTISED).as_ref().map(|p| p.peers), Some(1));
         lp::fake::clear();
         reset_ads();
@@ -1141,9 +1321,16 @@ mod tests {
         let peers = Arc::new(AtomicUsize::new(0));
         let place = |addrs: Option<Vec<String>>, peers: usize| {
             reset_ads();
-            let spec = AdSpec { data: "1abc".into(), addrs };
+            let spec = AdSpec {
+                data: "1abc".into(),
+                addrs,
+            };
             *lock(&WANTED_AD) = Some(spec.clone());
-            *lock(&ADVERTISED) = Some(Placed { spec, at: start, peers });
+            *lock(&ADVERTISED) = Some(Placed {
+                spec,
+                at: start,
+                peers,
+            });
             PEERS_CHECKED_AT.store(start, Ordering::SeqCst);
         };
         let ad_methods = || ad_calls().into_iter().map(|(m, _)| m).collect::<Vec<_>>();
@@ -1161,13 +1348,24 @@ mod tests {
         assert_eq!(lp::fake::methods(), ["connectedPeers"]);
         peers.store(1, Ordering::SeqCst);
         advertisement_tick().unwrap();
-        assert_eq!(lp::fake::methods(), ["connectedPeers"], "within PEER_CHECK_S of the last check");
+        assert_eq!(
+            lp::fake::methods(),
+            ["connectedPeers"],
+            "within PEER_CHECK_S of the last check"
+        );
         lp::fake::advance(PEER_CHECK_S);
         advertisement_tick().unwrap();
-        assert_eq!(ad_methods(), ["discoStopAdvertising", "discoStartAdvertising"]);
+        assert_eq!(
+            ad_methods(),
+            ["discoStopAdvertising", "discoStartAdvertising"]
+        );
         lp::fake::advance(PEER_CHECK_S);
         advertisement_tick().unwrap();
-        assert_eq!(ad_methods().len(), 2, "peers stayed up: nothing to re-place");
+        assert_eq!(
+            ad_methods().len(),
+            2,
+            "peers stayed up: nothing to re-place"
+        );
 
         // A self-built record is never re-placed for age.
         place(None, 1);
@@ -1186,14 +1384,29 @@ mod tests {
         lp::fake::advance(1);
         advertisement_tick().unwrap();
         let calls = ad_calls();
-        assert_eq!(calls.iter().map(|(m, _)| m.as_str()).collect::<Vec<_>>(), ["discoStopAdvertising", "createXpr", "discoStartAdvertising"]);
+        assert_eq!(
+            calls.iter().map(|(m, _)| m.as_str()).collect::<Vec<_>>(),
+            ["discoStopAdvertising", "createXpr", "discoStartAdvertising"]
+        );
         assert_eq!(calls[1].1[2], json!(start + AD_REFRESH_S));
-        assert_eq!(lock(&ADVERTISED).as_ref().map(|p| p.at), Some(start + AD_REFRESH_S));
+        assert_eq!(
+            lock(&ADVERTISED).as_ref().map(|p| p.at),
+            Some(start + AD_REFRESH_S)
+        );
 
         // A re-serve's change applies at once, whatever the clock.
-        *lock(&WANTED_AD) = Some(AdSpec { data: "1xyz".into(), addrs: None });
+        *lock(&WANTED_AD) = Some(AdSpec {
+            data: "1xyz".into(),
+            addrs: None,
+        });
         advertisement_tick().unwrap();
-        assert_eq!(ad_calls().last().unwrap(), &("discoStartAdvertising".to_string(), json!([RLN_GIFTER_SERVICE_ID, "1xyz", ""])));
+        assert_eq!(
+            ad_calls().last().unwrap(),
+            &(
+                "discoStartAdvertising".to_string(),
+                json!([RLN_GIFTER_SERVICE_ID, "1xyz", ""])
+            )
+        );
         lp::fake::clear();
         reset_ads();
     }

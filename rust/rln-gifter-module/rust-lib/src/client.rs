@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 
 use crate::lp::{self, b64, b64_decode};
 use crate::wire::{
-    service_data_lists, MembershipAllocationSuccess, RlnGifterRequest, RlnGifterResponse, RLN_GIFTER_CODEC,
-    RLN_GIFTER_SERVICE_ID,
+    service_data_lists, MembershipAllocationSuccess, RlnGifterRequest, RlnGifterResponse,
+    RLN_GIFTER_CODEC, RLN_GIFTER_SERVICE_ID,
 };
 
 // The gifter round trip (dial + on-chain register on the server) can run up
@@ -48,7 +48,9 @@ impl Candidate {
 fn candidates_in(reply: &Value, registry_hex: &str, auth_type: &str) -> Vec<Candidate> {
     let mut out = Vec::new();
     for rec in reply.as_array().map(Vec::as_slice).unwrap_or(&[]) {
-        let Some(peer_id) = rec.get("peerId").and_then(Value::as_str) else { continue };
+        let Some(peer_id) = rec.get("peerId").and_then(Value::as_str) else {
+            continue;
+        };
         let listed = rec
             .get("services")
             .and_then(Value::as_array)
@@ -74,7 +76,10 @@ fn candidates_in(reply: &Value, registry_hex: &str, auth_type: &str) -> Vec<Cand
         if addrs.is_empty() || out.iter().any(|c: &Candidate| c.peer_id == peer_id) {
             continue;
         }
-        out.push(Candidate { peer_id: peer_id.to_string(), addrs });
+        out.push(Candidate {
+            peer_id: peer_id.to_string(),
+            addrs,
+        });
     }
     out
 }
@@ -95,8 +100,13 @@ impl Discovery {
     fn message(&self, registry_hex: &str, auth_type: &str) -> String {
         match self {
             Discovery::Unavailable(e) => format!("discovery unavailable: {e}"),
-            Discovery::NotJoined => format!("discovery not joined: no connected peer after {}s", lp::JOIN_WAIT_S),
-            Discovery::NoneAdvertising => format!("no allocator advertises {registry_hex}/{auth_type}"),
+            Discovery::NotJoined => format!(
+                "discovery not joined: no connected peer after {}s",
+                lp::JOIN_WAIT_S
+            ),
+            Discovery::NoneAdvertising => {
+                format!("no allocator advertises {registry_hex}/{auth_type}")
+            }
             Discovery::Found(_) => String::new(),
         }
     }
@@ -109,7 +119,11 @@ impl Discovery {
 fn lookup(registry_hex: &str, auth_type: &str) -> (Discovery, usize) {
     // Interest first: it builds the per-service routing table the lookups
     // query; a repeat is harmless.
-    if let Err(e) = lp::call_libp2p("discoRegisterInterest", &json!([RLN_GIFTER_SERVICE_ID]), DISCO_TIMEOUT_MS) {
+    if let Err(e) = lp::call_libp2p(
+        "discoRegisterInterest",
+        &json!([RLN_GIFTER_SERVICE_ID]),
+        DISCO_TIMEOUT_MS,
+    ) {
         return (Discovery::Unavailable(e), 0);
     }
     let peers = match lp::wait_joined() {
@@ -121,7 +135,11 @@ fn lookup(registry_hex: &str, auth_type: &str) -> (Discovery, usize) {
         if wait > 0 {
             lp::sleep_s(wait);
         }
-        let reply = match lp::call_libp2p("discoLookup", &json!([RLN_GIFTER_SERVICE_ID, ""]), DISCO_TIMEOUT_MS) {
+        let reply = match lp::call_libp2p(
+            "discoLookup",
+            &json!([RLN_GIFTER_SERVICE_ID, ""]),
+            DISCO_TIMEOUT_MS,
+        ) {
             Ok(r) => r,
             Err(e) => return (Discovery::Unavailable(e), peers),
         };
@@ -185,13 +203,19 @@ impl Failure {
 
 impl From<String> for Failure {
     fn from(error: String) -> Self {
-        Failure { error, gifter: None }
+        Failure {
+            error,
+            gifter: None,
+        }
     }
 }
 
 impl From<&str> for Failure {
     fn from(error: &str) -> Self {
-        Failure { error: error.to_string(), gifter: None }
+        Failure {
+            error: error.to_string(),
+            gifter: None,
+        }
     }
 }
 
@@ -213,7 +237,12 @@ impl Attempt {
 /// One request→response with one allocator over the generic libp2p bridge,
 /// to the caller's grant shape; a failure says whether the allocator's own
 /// reply gave it.
-fn ask(peer_id: &str, addrs: &[String], req: &RlnGifterRequest, config: Option<&str>) -> Result<Value, (Attempt, bool)> {
+fn ask(
+    peer_id: &str,
+    addrs: &[String],
+    req: &RlnGifterRequest,
+    config: Option<&str>,
+) -> Result<Value, (Attempt, bool)> {
     let unreplied = |a: Attempt| (a, false);
     let pr_args = json!({
         "peerId": peer_id,
@@ -222,10 +251,18 @@ fn ask(peer_id: &str, addrs: &[String], req: &RlnGifterRequest, config: Option<&
         "requestB64": b64(&req.encode()),
         "timeoutMs": REQUEST_TIMEOUT_MS,
     });
-    let pr = match lp::call_libp2p("protocolRequest", &json!([pr_args.to_string()]), REQUEST_CALL_TIMEOUT_MS) {
+    let pr = match lp::call_libp2p(
+        "protocolRequest",
+        &json!([pr_args.to_string()]),
+        REQUEST_CALL_TIMEOUT_MS,
+    ) {
         Ok(v) => v,
         // Nothing reached the allocator: the dial or the write failed.
-        Err(e) if e.contains("dial failed") || e.contains("dial returned no stream") || e.contains("write failed") => {
+        Err(e)
+            if e.contains("dial failed")
+                || e.contains("dial returned no stream")
+                || e.contains("write failed") =>
+        {
             return Err(unreplied(Attempt::Next(e)))
         }
         Err(e) => return Err(unreplied(Attempt::Stop(e))),
@@ -233,12 +270,19 @@ fn ask(peer_id: &str, addrs: &[String], req: &RlnGifterRequest, config: Option<&
     let resp_b64 = pr
         .get("responseB64")
         .and_then(Value::as_str)
-        .ok_or_else(|| unreplied(Attempt::Stop(format!("protocolRequest: no responseB64 in {pr}"))))?;
-    let resp = RlnGifterResponse::decode(&b64_decode(resp_b64).map_err(|e| unreplied(Attempt::Stop(e)))?)
-        .map_err(|e| unreplied(Attempt::Stop(e)))?;
+        .ok_or_else(|| {
+            unreplied(Attempt::Stop(format!(
+                "protocolRequest: no responseB64 in {pr}"
+            )))
+        })?;
+    let resp =
+        RlnGifterResponse::decode(&b64_decode(resp_b64).map_err(|e| unreplied(Attempt::Stop(e)))?)
+            .map_err(|e| unreplied(Attempt::Stop(e)))?;
 
     if resp.request_id != req.request_id {
-        return Err(unreplied(Attempt::Stop("gifter response requestId mismatch".into())));
+        return Err(unreplied(Attempt::Stop(
+            "gifter response requestId mismatch".into(),
+        )));
     }
     judge(resp, config)
         .map(|success| grant_json(peer_id, &req.identity_commitment, success))
@@ -250,7 +294,10 @@ fn ask(peer_id: &str, addrs: &[String], req: &RlnGifterRequest, config: Option<&
 /// unsupported or rejected vector, spent credential) and a registration the
 /// allocator never submitted (`not submitted: …`) move on; anything after
 /// the request was acted on stops.
-fn judge(resp: RlnGifterResponse, config: Option<&str>) -> Result<MembershipAllocationSuccess, Attempt> {
+fn judge(
+    resp: RlnGifterResponse,
+    config: Option<&str>,
+) -> Result<MembershipAllocationSuccess, Attempt> {
     if !resp.auth_success {
         return Err(Attempt::Next(
             resp.error
@@ -276,14 +323,20 @@ fn judge(resp: RlnGifterResponse, config: Option<&str>) -> Result<MembershipAllo
     // allocator that registered it elsewhere has spent for nothing.
     if let (Some(want), Some(got)) = (config, &success.config_account_id) {
         if !got.eq_ignore_ascii_case(want) {
-            return Err(Attempt::Stop(format!("gifter registered on {got}, not the requested {want}")));
+            return Err(Attempt::Stop(format!(
+                "gifter registered on {got}, not the requested {want}"
+            )));
         }
     }
     Ok(success)
 }
 
 /// The caller's grant shape.
-fn grant_json(peer_id: &str, identity_commitment: &[u8], success: MembershipAllocationSuccess) -> Value {
+fn grant_json(
+    peer_id: &str,
+    identity_commitment: &[u8],
+    success: MembershipAllocationSuccess,
+) -> Value {
     let tx_hash = hex::encode(&success.transaction_hash);
     // The gifter membership flow sends no mix-RLN messages, so there is no
     // identity to adopt into a mix/proof subsystem, and the client runs against a
@@ -321,8 +374,16 @@ fn grant_json(peer_id: &str, identity_commitment: &[u8], success: MembershipAllo
 /// `discovered` ride along with the error text.
 pub fn request(args_json: &str) -> Result<Value, Failure> {
     let a: Value = serde_json::from_str(args_json).map_err(|e| format!("request args: {e}"))?;
-    let gifter_peer_id = a.get("gifterPeerId").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
-    let gifter_multiaddr = a.get("gifterMultiaddr").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
+    let gifter_peer_id = a
+        .get("gifterPeerId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let gifter_multiaddr = a
+        .get("gifterMultiaddr")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let configured = match (gifter_peer_id, gifter_multiaddr) {
         (Some(p), Some(m)) => Some((p.to_string(), m.to_string())),
         (None, None) => None,
@@ -336,15 +397,22 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
     if !discover && configured.is_none() {
         return Err("request needs discover or gifterPeerId+gifterMultiaddr".into());
     }
-    let config = match a.get("config").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) {
+    let config = match a
+        .get("config")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(c) => Some(crate::wire::canonical_account(c)?),
         None => None,
     };
     if discover && config.is_none() && configured.is_none() {
         return Err("discovery needs config (the registry); name one or configure gifterPeerId+gifterMultiaddr".into());
     }
-    let provided_commitment =
-        a.get("identityCommitment").and_then(Value::as_str).unwrap_or("");
+    let provided_commitment = a
+        .get("identityCommitment")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let rate = a.get("rate").and_then(Value::as_u64).unwrap_or(0);
 
     // The commitment comes from the caller — the RLN membership module
@@ -410,7 +478,10 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
         return Err(format!("authType '{auth_type_req}' needs authPayload or authProvider").into());
     };
 
-    let request_id = format!("gift-{}", &id_commitment_hex[..id_commitment_hex.len().min(16)]);
+    let request_id = format!(
+        "gift-{}",
+        &id_commitment_hex[..id_commitment_hex.len().min(16)]
+    );
     let req = RlnGifterRequest {
         request_id,
         authentication_type: auth_type_req.as_bytes().to_vec(),
@@ -453,19 +524,31 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
         }
     }
     if let Some((peer_id, multiaddr)) = &configured {
-        return match ask(peer_id, std::slice::from_ref(multiaddr), &req, config.as_deref()) {
+        return match ask(
+            peer_id,
+            std::slice::from_ref(multiaddr),
+            &req,
+            config.as_deref(),
+        ) {
             Ok(mut out) => {
                 out["discovered"] = json!(false);
                 Ok(out)
             }
             Err((e, replied)) => Err(Failure {
-                error: if tried.is_empty() { e.message() } else { format!("{}; before that: {}", e.message(), tried.join("; ")) },
+                error: if tried.is_empty() {
+                    e.message()
+                } else {
+                    format!("{}; before that: {}", e.message(), tried.join("; "))
+                },
                 gifter: replied.then(|| (peer_id.clone(), false)),
             }),
         };
     }
     Err(Failure {
-        error: format!("no allocator granted and none is configured: {}", tried.join("; ")),
+        error: format!(
+            "no allocator granted and none is configured: {}",
+            tried.join("; ")
+        ),
         gifter: last_reply,
     })
 }
@@ -490,12 +573,20 @@ mod tests {
 
     // 0xab repeated reads (little-endian) above r; a 0x0a top byte keeps the
     // value canonical whatever the lower bytes hold.
-    fn canonical() -> String { format!("{}0a", "ab".repeat(31)) }
-    fn canonical_upper() -> String { format!("{}0A", "AB".repeat(31)) }
+    fn canonical() -> String {
+        format!("{}0a", "ab".repeat(31))
+    }
+    fn canonical_upper() -> String {
+        format!("{}0A", "AB".repeat(31))
+    }
 
     #[test]
     fn non_canonical_commitment_is_refused_before_any_io() {
-        for (idc, want) in [("ff".repeat(32), "invalid_commitment: not a BN254"), ("00".repeat(32), "invalid_commitment: zero"), ("ab".repeat(31), "32 bytes")] {
+        for (idc, want) in [
+            ("ff".repeat(32), "invalid_commitment: not a BN254"),
+            ("00".repeat(32), "invalid_commitment: zero"),
+            ("ab".repeat(31), "32 bytes"),
+        ] {
             let e = request(&format!(
                 r#"{{"gifterPeerId":"p","gifterMultiaddr":"/m","identityCommitment":"{idc}","rate":100}}"#
             ))
@@ -512,8 +603,8 @@ mod tests {
 
     #[test]
     fn payload_and_provider_are_mutually_exclusive() {
-        let e = req(r#""authType":"voucher-v1","authPayload":"aa","authProvider":"m","#)
-            .unwrap_err();
+        let e =
+            req(r#""authType":"voucher-v1","authPayload":"aa","authProvider":"m","#).unwrap_err();
         assert!(e.contains("mutually exclusive"), "got: {e}");
     }
 
@@ -555,13 +646,21 @@ mod tests {
         ))
         .unwrap_err();
         assert!(e.contains("needs discover or gifterPeerId"), "got: {e}");
-        let e = request(&format!(r#"{{"discover":"no","identityCommitment":"{}"}}"#, canonical())).unwrap_err();
+        let e = request(&format!(
+            r#"{{"discover":"no","identityCommitment":"{}"}}"#,
+            canonical()
+        ))
+        .unwrap_err();
         assert!(e.contains("discover must be a boolean"), "got: {e}");
     }
 
     #[test]
     fn discovery_needs_a_registry_to_match_on() {
-        let e = request(&format!(r#"{{"identityCommitment":"{}","rate":100}}"#, canonical())).unwrap_err();
+        let e = request(&format!(
+            r#"{{"identityCommitment":"{}","rate":100}}"#,
+            canonical()
+        ))
+        .unwrap_err();
         assert!(e.contains("discovery needs config"), "got: {e}");
         let e = discover("{}").unwrap_err();
         assert!(e.contains("discover needs config"), "got: {e}");
@@ -587,7 +686,10 @@ mod tests {
         ]);
         assert_eq!(
             candidates_in(&reply, &d, "peer-any"),
-            [Candidate { peer_id: "A".into(), addrs: vec!["/ip4/127.0.0.1/tcp/1".into()] }]
+            [Candidate {
+                peer_id: "A".into(),
+                addrs: vec!["/ip4/127.0.0.1/tcp/1".into()]
+            }]
         );
         assert!(candidates_in(&reply, &m, "peer-any").is_empty());
         assert!(candidates_in(&reply, &d, "eth-allowlist").is_empty());
@@ -601,20 +703,69 @@ mod tests {
     #[test]
     fn a_reply_says_whether_the_next_allocator_may_be_asked() {
         use crate::wire::{MembershipAllocationFailure, MembershipAllocationSuccess};
-        let refused = RlnGifterResponse { request_id: "r".into(), auth_success: false, error: Some("credential already used: x".into()), ..Default::default() };
-        assert!(matches!(judge(refused, None), Err(Attempt::Next(m)) if m.contains("already used")));
-        let not_submitted = RlnGifterResponse { request_id: "r".into(), auth_success: true,
-            failure: Some(MembershipAllocationFailure { error_message: "not submitted: register_member refused: insufficient_balance".into() }), ..Default::default() };
-        assert!(matches!(judge(not_submitted, None), Err(Attempt::Next(m)) if m.starts_with("not submitted")));
-        let unconfirmed = RlnGifterResponse { request_id: "r".into(), auth_success: true,
-            failure: Some(MembershipAllocationFailure { error_message: "unconfirmed: registration submitted (tx ab) but not on chain within 150s".into() }), ..Default::default() };
-        assert!(matches!(judge(unconfirmed, None), Err(Attempt::Stop(m)) if m.starts_with("unconfirmed")));
-        let elsewhere = RlnGifterResponse { request_id: "r".into(), auth_success: true,
-            success: Some(MembershipAllocationSuccess { leaf_index: 1, config_account_id: Some("bb".repeat(32)), ..Default::default() }), ..Default::default() };
-        assert!(matches!(judge(elsewhere, Some(&"aa".repeat(32))), Err(Attempt::Stop(m)) if m.contains("registered on")));
-        let granted = RlnGifterResponse { request_id: "r".into(), auth_success: true,
-            success: Some(MembershipAllocationSuccess { leaf_index: 4, config_account_id: Some("aa".repeat(32)), ..Default::default() }), ..Default::default() };
-        assert_eq!(judge(granted, Some(&"aa".repeat(32))).map(|s| s.leaf_index).ok(), Some(4));
+        let refused = RlnGifterResponse {
+            request_id: "r".into(),
+            auth_success: false,
+            error: Some("credential already used: x".into()),
+            ..Default::default()
+        };
+        assert!(
+            matches!(judge(refused, None), Err(Attempt::Next(m)) if m.contains("already used"))
+        );
+        let not_submitted = RlnGifterResponse {
+            request_id: "r".into(),
+            auth_success: true,
+            failure: Some(MembershipAllocationFailure {
+                error_message: "not submitted: register_member refused: insufficient_balance"
+                    .into(),
+            }),
+            ..Default::default()
+        };
+        assert!(
+            matches!(judge(not_submitted, None), Err(Attempt::Next(m)) if m.starts_with("not submitted"))
+        );
+        let unconfirmed = RlnGifterResponse {
+            request_id: "r".into(),
+            auth_success: true,
+            failure: Some(MembershipAllocationFailure {
+                error_message:
+                    "unconfirmed: registration submitted (tx ab) but not on chain within 150s"
+                        .into(),
+            }),
+            ..Default::default()
+        };
+        assert!(
+            matches!(judge(unconfirmed, None), Err(Attempt::Stop(m)) if m.starts_with("unconfirmed"))
+        );
+        let elsewhere = RlnGifterResponse {
+            request_id: "r".into(),
+            auth_success: true,
+            success: Some(MembershipAllocationSuccess {
+                leaf_index: 1,
+                config_account_id: Some("bb".repeat(32)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(
+            matches!(judge(elsewhere, Some(&"aa".repeat(32))), Err(Attempt::Stop(m)) if m.contains("registered on"))
+        );
+        let granted = RlnGifterResponse {
+            request_id: "r".into(),
+            auth_success: true,
+            success: Some(MembershipAllocationSuccess {
+                leaf_index: 4,
+                config_account_id: Some("aa".repeat(32)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            judge(granted, Some(&"aa".repeat(32)))
+                .map(|s| s.leaf_index)
+                .ok(),
+            Some(4)
+        );
     }
 
     #[test]
@@ -641,7 +792,9 @@ mod tests {
             }
             match method {
                 "discoRegisterInterest" => Ok(json!(true)),
-                "connectedPeers" => Ok(json!((0..peers).map(|i| format!("P{i}")).collect::<Vec<_>>())),
+                "connectedPeers" => Ok(json!((0..peers)
+                    .map(|i| format!("P{i}"))
+                    .collect::<Vec<_>>())),
                 "discoLookup" => Ok(records.clone()),
                 m => Err(format!("unscripted {m}")),
             }
@@ -666,28 +819,60 @@ mod tests {
     fn a_lookup_says_why_it_found_nobody() {
         let (r, t) = (registry(), "peer-any");
 
-        lp::fake::install(Box::new(|_, m, _| Err(format!("{m}: service discovery not mounted"))));
+        lp::fake::install(Box::new(|_, m, _| {
+            Err(format!("{m}: service discovery not mounted"))
+        }));
         let (d, _) = lookup(&r, t);
-        assert_eq!(d.message(&r, t), "discovery unavailable: discoRegisterInterest: service discovery not mounted");
+        assert_eq!(
+            d.message(&r, t),
+            "discovery unavailable: discoRegisterInterest: service discovery not mounted"
+        );
 
         scripted(0, json!([]), no_extra);
         assert_eq!(lookup(&r, t), (Discovery::NotJoined, 0));
-        assert_eq!(Discovery::NotJoined.message(&r, t), "discovery not joined: no connected peer after 20s");
+        assert_eq!(
+            Discovery::NotJoined.message(&r, t),
+            "discovery not joined: no connected peer after 20s"
+        );
         assert_eq!(lp::now_s(), lp::fake::START_S + lp::JOIN_WAIT_S);
         assert!(!lp::fake::methods().iter().any(|m| m == "discoLookup"));
 
         scripted(2, json!([]), no_extra);
         assert_eq!(lookup(&r, t), (Discovery::NoneAdvertising, 2));
-        assert_eq!(Discovery::NoneAdvertising.message(&r, t), format!("no allocator advertises {r}/peer-any"));
-        assert_eq!(lp::fake::methods().iter().filter(|m| *m == "discoLookup").count(), LOOKUP_WAITS_S.len());
-        assert_eq!(lp::now_s(), lp::fake::START_S + LOOKUP_WAITS_S.iter().sum::<u64>());
+        assert_eq!(
+            Discovery::NoneAdvertising.message(&r, t),
+            format!("no allocator advertises {r}/peer-any")
+        );
+        assert_eq!(
+            lp::fake::methods()
+                .iter()
+                .filter(|m| *m == "discoLookup")
+                .count(),
+            LOOKUP_WAITS_S.len()
+        );
+        assert_eq!(
+            lp::now_s(),
+            lp::fake::START_S + LOOKUP_WAITS_S.iter().sum::<u64>()
+        );
 
         scripted(1, advertising("A", t), no_extra);
         assert_eq!(
             lookup(&r, t),
-            (Discovery::Found(vec![Candidate { peer_id: "A".into(), addrs: vec!["/ip4/127.0.0.1/tcp/1".into()] }]), 1)
+            (
+                Discovery::Found(vec![Candidate {
+                    peer_id: "A".into(),
+                    addrs: vec!["/ip4/127.0.0.1/tcp/1".into()]
+                }]),
+                1
+            )
         );
-        assert_eq!(lp::fake::calls()[1], ("connectedPeers".to_string(), json!([lp::PEER_DIRECTION_OUTBOUND])));
+        assert_eq!(
+            lp::fake::calls()[1],
+            (
+                "connectedPeers".to_string(),
+                json!([lp::PEER_DIRECTION_OUTBOUND])
+            )
+        );
 
         scripted(0, json!([]), no_extra);
         assert_eq!(
@@ -705,7 +890,12 @@ mod tests {
     #[test]
     fn a_request_on_an_unjoined_node_says_so() {
         scripted(0, json!([]), no_extra);
-        let f = super::request(&format!(r#"{{"config":"{}","identityCommitment":"{}"}}"#, registry(), canonical())).unwrap_err();
+        let f = super::request(&format!(
+            r#"{{"config":"{}","identityCommitment":"{}"}}"#,
+            registry(),
+            canonical()
+        ))
+        .unwrap_err();
         assert_eq!(f.error, "no allocator granted and none is configured: discovery not joined: no connected peer after 20s");
         assert_eq!(f.json(), json!({ "error": f.error }));
         lp::fake::clear();
@@ -714,7 +904,12 @@ mod tests {
     fn refusing(method: &str, _: &Value) -> Option<Result<Value, String>> {
         (method == "protocolRequest").then(|| {
             let id = format!("gift-{}", &canonical()[..16]);
-            let resp = RlnGifterResponse { request_id: id, auth_success: false, error: Some("credential already used: x".into()), ..Default::default() };
+            let resp = RlnGifterResponse {
+                request_id: id,
+                auth_success: false,
+                error: Some("credential already used: x".into()),
+                ..Default::default()
+            };
             Ok(json!({ "responseB64": b64(&resp.encode()) }))
         })
     }
@@ -722,8 +917,14 @@ mod tests {
     fn unconfirmed(method: &str, _: &Value) -> Option<Result<Value, String>> {
         (method == "protocolRequest").then(|| {
             let id = format!("gift-{}", &canonical()[..16]);
-            let resp = RlnGifterResponse { request_id: id, auth_success: true,
-                failure: Some(crate::wire::MembershipAllocationFailure { error_message: "unconfirmed: not on chain".into() }), ..Default::default() };
+            let resp = RlnGifterResponse {
+                request_id: id,
+                auth_success: true,
+                failure: Some(crate::wire::MembershipAllocationFailure {
+                    error_message: "unconfirmed: not on chain".into(),
+                }),
+                ..Default::default()
+            };
             Ok(json!({ "responseB64": b64(&resp.encode()) }))
         })
     }
@@ -734,26 +935,48 @@ mod tests {
 
     #[test]
     fn a_failure_an_allocator_answered_names_it() {
-        let args = format!(r#"{{"config":"{}","identityCommitment":"{}"}}"#, registry(), canonical());
+        let args = format!(
+            r#"{{"config":"{}","identityCommitment":"{}"}}"#,
+            registry(),
+            canonical()
+        );
 
         scripted(1, advertising("A", ""), refusing);
         let f = super::request(&args).unwrap_err();
-        assert_eq!(f.error, "no allocator granted and none is configured: A: credential already used: x");
-        assert_eq!(f.json(), json!({ "error": f.error, "gifterPeerId": "A", "discovered": true }));
+        assert_eq!(
+            f.error,
+            "no allocator granted and none is configured: A: credential already used: x"
+        );
+        assert_eq!(
+            f.json(),
+            json!({ "error": f.error, "gifterPeerId": "A", "discovered": true })
+        );
 
         scripted(1, advertising("A", ""), unconfirmed);
         let f = super::request(&args).unwrap_err();
-        assert_eq!(f.json(), json!({ "error": "A: unconfirmed: not on chain", "gifterPeerId": "A", "discovered": true }));
+        assert_eq!(
+            f.json(),
+            json!({ "error": "A: unconfirmed: not on chain", "gifterPeerId": "A", "discovered": true })
+        );
 
-        let pair = format!(r#"{{"discover":false,"gifterPeerId":"G","gifterMultiaddr":"/m","identityCommitment":"{}"}}"#, canonical());
+        let pair = format!(
+            r#"{{"discover":false,"gifterPeerId":"G","gifterMultiaddr":"/m","identityCommitment":"{}"}}"#,
+            canonical()
+        );
         scripted(1, json!([]), unconfirmed);
         let f = super::request(&pair).unwrap_err();
-        assert_eq!(f.json(), json!({ "error": "unconfirmed: not on chain", "gifterPeerId": "G", "discovered": false }));
+        assert_eq!(
+            f.json(),
+            json!({ "error": "unconfirmed: not on chain", "gifterPeerId": "G", "discovered": false })
+        );
 
         // Nobody read the request: no allocator to name.
         scripted(1, advertising("A", ""), undialable);
         let f = super::request(&args).unwrap_err();
-        assert_eq!(f.json(), json!({ "error": "no allocator granted and none is configured: A: protocolRequest: dial failed" }));
+        assert_eq!(
+            f.json(),
+            json!({ "error": "no allocator granted and none is configured: A: protocolRequest: dial failed" })
+        );
         scripted(1, json!([]), undialable);
         let f = super::request(&pair).unwrap_err();
         assert_eq!(f.json(), json!({ "error": "protocolRequest: dial failed" }));

@@ -73,7 +73,10 @@ pub trait RlnGifterModule: Send + 'static {
     fn on_context_ready(&mut self, _ctx: &RustModuleContext) {}
 }
 
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/generated/provider_gen.rs"));
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/generated/provider_gen.rs"
+));
 
 #[derive(Default)]
 struct RlnGifter {}

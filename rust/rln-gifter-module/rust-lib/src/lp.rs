@@ -190,12 +190,16 @@ pub fn ensure_client(target: &str) -> Result<(), String> {
         return Ok(());
     }
     if !on_owner_thread() {
-        return Err(format!("cannot open lp client for {target} off the owner thread"));
+        return Err(format!(
+            "cannot open lp client for {target} off the owner thread"
+        ));
     }
     if create_client(target) {
         Ok(())
     } else {
-        Err(format!("lp_client_create failed for {target} (is the module loaded?)"))
+        Err(format!(
+            "lp_client_create failed for {target} (is the module loaded?)"
+        ))
     }
 }
 
@@ -225,7 +229,9 @@ extern "C" fn reply_trampoline(ok: c_int, json: *const c_char, user_data: *mut c
     let raw = if json.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(json) }.to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr(json) }
+            .to_string_lossy()
+            .into_owned()
     };
     let _ = reply.tx.send((ok != 0, raw));
 }
@@ -249,7 +255,12 @@ fn parse_ok(raw: &str) -> Value {
 /// thread uses synchronous lp_invoke (its wait loop pumps the owner Qt loop);
 /// off it uses lp_invoke_async + a channel. `timeout_ms` is the explicit
 /// per-call budget.
-pub fn call_json(target: &str, method: &str, args: &Value, timeout_ms: i32) -> Result<Value, String> {
+pub fn call_json(
+    target: &str,
+    method: &str,
+    args: &Value,
+    timeout_ms: i32,
+) -> Result<Value, String> {
     #[cfg(test)]
     if let Some(r) = fake::intercept(target, method, args) {
         return r;
@@ -276,7 +287,9 @@ pub fn call_json(target: &str, method: &str, args: &Value, timeout_ms: i32) -> R
             let msg = if error_json.is_null() {
                 format!("{method}: lp error {rc}")
             } else {
-                let m = unsafe { CStr::from_ptr(error_json) }.to_string_lossy().into_owned();
+                let m = unsafe { CStr::from_ptr(error_json) }
+                    .to_string_lossy()
+                    .into_owned();
                 unsafe { ffi::lp_string_free(error_json) };
                 m
             };
@@ -285,7 +298,9 @@ pub fn call_json(target: &str, method: &str, args: &Value, timeout_ms: i32) -> R
         let raw = if result_json.is_null() {
             String::new()
         } else {
-            let s = unsafe { CStr::from_ptr(result_json) }.to_string_lossy().into_owned();
+            let s = unsafe { CStr::from_ptr(result_json) }
+                .to_string_lossy()
+                .into_owned();
             unsafe { ffi::lp_string_free(result_json) };
             s
         };
@@ -378,7 +393,11 @@ const PEERS_TIMEOUT_MS: i32 = 10_000;
 
 /// How many outbound peers this node is connected to.
 pub(crate) fn outbound_peers() -> Result<usize, String> {
-    let v = call_libp2p("connectedPeers", &serde_json::json!([PEER_DIRECTION_OUTBOUND]), PEERS_TIMEOUT_MS)?;
+    let v = call_libp2p(
+        "connectedPeers",
+        &serde_json::json!([PEER_DIRECTION_OUTBOUND]),
+        PEERS_TIMEOUT_MS,
+    )?;
     v.as_array()
         .map(Vec::len)
         .ok_or_else(|| format!("connectedPeers: not a peer list: {v}"))
@@ -443,7 +462,13 @@ pub(crate) mod fake {
     }
 
     pub(crate) fn install(handler: Handler) {
-        FAKE.with(|f| *f.borrow_mut() = Some(State { handler: Some(handler), calls: Vec::new(), now: START_S }));
+        FAKE.with(|f| {
+            *f.borrow_mut() = Some(State {
+                handler: Some(handler),
+                calls: Vec::new(),
+                now: START_S,
+            })
+        });
     }
 
     pub(crate) fn clear() {
@@ -452,7 +477,12 @@ pub(crate) mod fake {
 
     /// Every intercepted call so far, as (method, args).
     pub(crate) fn calls() -> Vec<(String, Value)> {
-        FAKE.with(|f| f.borrow().as_ref().map(|s| s.calls.clone()).unwrap_or_default())
+        FAKE.with(|f| {
+            f.borrow()
+                .as_ref()
+                .map(|s| s.calls.clone())
+                .unwrap_or_default()
+        })
     }
 
     pub(crate) fn methods() -> Vec<String> {
@@ -474,7 +504,11 @@ pub(crate) mod fake {
         })
     }
 
-    pub(super) fn intercept(target: &str, method: &str, args: &Value) -> Option<Result<Value, String>> {
+    pub(super) fn intercept(
+        target: &str,
+        method: &str,
+        args: &Value,
+    ) -> Option<Result<Value, String>> {
         // The handler runs outside the borrow, so it may read the clock.
         let handler = FAKE.with(|f| {
             let mut g = f.borrow_mut();

@@ -40,7 +40,10 @@ pub fn append_missing(path: &str, nullifiers: &HashSet<String>) -> Result<(), St
         return Ok(());
     }
     let present = load_nullifiers(path)?;
-    let mut missing: Vec<&String> = nullifiers.iter().filter(|n| !present.contains(*n)).collect();
+    let mut missing: Vec<&String> = nullifiers
+        .iter()
+        .filter(|n| !present.contains(*n))
+        .collect();
     missing.sort();
     for n in missing {
         append_nullifier(path, n)?;
@@ -86,7 +89,8 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> String {
-        let p = std::env::temp_dir().join(format!("rln-gifter-nul-{}-{}", name, std::process::id()));
+        let p =
+            std::env::temp_dir().join(format!("rln-gifter-nul-{}-{}", name, std::process::id()));
         let _ = std::fs::remove_file(&p);
         p.to_string_lossy().into_owned()
     }
@@ -130,7 +134,11 @@ mod tests {
         append_missing(&new, &load_nullifiers(&old).unwrap()).unwrap();
         let set = load_nullifiers(&new).unwrap();
         assert_eq!(set.len(), 2, "{set:?}");
-        assert_eq!(std::fs::read_to_string(&new).unwrap().matches("bb").count(), 1, "no duplicate line");
+        assert_eq!(
+            std::fs::read_to_string(&new).unwrap().matches("bb").count(),
+            1,
+            "no duplicate line"
+        );
         append_missing("", &set).unwrap();
         let _ = std::fs::remove_file(&old);
         let _ = std::fs::remove_file(&new);

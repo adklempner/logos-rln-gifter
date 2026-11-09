@@ -64,7 +64,9 @@ pub fn service_data(pairs: &[(String, String)]) -> Result<String, String> {
 /// Whether advertised data (the raw bytes of a discovery record's service
 /// data) lists this pair. Data of another version or layout lists nothing.
 pub fn service_data_lists(data: &[u8], registry_hex: &str, auth_type: &str) -> bool {
-    let Some((&version, rest)) = data.split_first() else { return false };
+    let Some((&version, rest)) = data.split_first() else {
+        return false;
+    };
     if version != SERVICE_DATA_VERSION {
         return false;
     }
@@ -81,7 +83,10 @@ pub fn service_data_lists(data: &[u8], registry_hex: &str, auth_type: &str) -> b
 /// it answers in `config_account_id`. The registry module takes either.
 pub fn canonical_account(s: &str) -> Result<String, String> {
     let s = s.trim();
-    let h = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    let h = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
     if h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Ok(h.to_ascii_lowercase());
     }
@@ -89,7 +94,10 @@ pub fn canonical_account(s: &str) -> Result<String, String> {
         .from_base58()
         .map_err(|e| format!("config account '{s}': neither 64 hex nor base58 ({e:?})"))?;
     if bytes.len() != 32 {
-        return Err(format!("config account '{s}': base58 decodes to {} bytes, want 32", bytes.len()));
+        return Err(format!(
+            "config account '{s}': base58 decodes to {} bytes, want 32",
+            bytes.len()
+        ));
     }
     Ok(hex::encode(bytes))
 }
@@ -121,7 +129,9 @@ pub fn commitment_refusal(bytes: &[u8]) -> Option<&'static str> {
             return None;
         }
         if le_byte > r_byte {
-            return Some("invalid_commitment: not a BN254 field element (little-endian value >= r)");
+            return Some(
+                "invalid_commitment: not a BN254 field element (little-endian value >= r)",
+            );
         }
     }
     Some("invalid_commitment: not a BN254 field element (little-endian value >= r)")
@@ -432,17 +442,19 @@ mod tests {
         assert!(!service_data_lists(data.as_bytes(), &m, "eth-allowlist"));
         assert!(!service_data_lists(data.as_bytes(), &d, ""));
         assert!(!service_data_lists(b"", &d, "peer-any"));
-        assert!(!service_data_lists(format!("2{}", &data[1..]).as_bytes(), &d, "peer-any"));
+        assert!(!service_data_lists(
+            format!("2{}", &data[1..]).as_bytes(),
+            &d,
+            "peer-any"
+        ));
         assert!(!service_data_lists(b"1not*base64", &d, "peer-any"));
 
         let open = service_data(&[(d.clone(), String::new())]).unwrap();
         assert!(service_data_lists(open.as_bytes(), &d, ""));
 
-        let eight: Vec<(String, String)> =
-            (0..8u8).map(|i| (d.clone(), format!("t{i}"))).collect();
+        let eight: Vec<(String, String)> = (0..8u8).map(|i| (d.clone(), format!("t{i}"))).collect();
         assert_eq!(service_data(&eight).unwrap().len(), 33);
-        let nine: Vec<(String, String)> =
-            (0..9u8).map(|i| (d.clone(), format!("t{i}"))).collect();
+        let nine: Vec<(String, String)> = (0..9u8).map(|i| (d.clone(), format!("t{i}"))).collect();
         assert!(service_data(&nine).unwrap_err().contains("at most 8"));
         assert_eq!(service_data(&[]).unwrap(), "1");
     }
@@ -452,12 +464,20 @@ mod tests {
         // r itself, little-endian: refused; r - 1: accepted.
         let mut r_le = BN254_R_BE;
         r_le.reverse();
-        assert!(commitment_refusal(&r_le).unwrap().contains("invalid_commitment"));
+        assert!(commitment_refusal(&r_le)
+            .unwrap()
+            .contains("invalid_commitment"));
         let mut r_minus_1 = r_le;
         r_minus_1[0] -= 1;
         assert_eq!(commitment_refusal(&r_minus_1), None);
-        assert_eq!(commitment_refusal(&[0xff; 32]).unwrap(), "invalid_commitment: not a BN254 field element (little-endian value >= r)");
-        assert_eq!(commitment_refusal(&[0u8; 32]).unwrap(), "invalid_commitment: zero");
+        assert_eq!(
+            commitment_refusal(&[0xff; 32]).unwrap(),
+            "invalid_commitment: not a BN254 field element (little-endian value >= r)"
+        );
+        assert_eq!(
+            commitment_refusal(&[0u8; 32]).unwrap(),
+            "invalid_commitment: zero"
+        );
         let mut one = [0u8; 32];
         one[0] = 1;
         assert_eq!(commitment_refusal(&one), None);
@@ -471,11 +491,16 @@ mod tests {
     #[test]
     fn config_accounts_normalise_to_lowercase_hex() {
         let hex = "ab".repeat(32);
-        assert_eq!(canonical_account(&format!(" 0X{} ", hex.to_uppercase())).unwrap(), hex);
+        assert_eq!(
+            canonical_account(&format!(" 0X{} ", hex.to_uppercase())).unwrap(),
+            hex
+        );
         // base58 of 32 0xab bytes.
         let b58 = "CZ8YUVdk7znjrUmnb5n7kgySk9yRAsQDYmyCxzfSky9t";
         assert_eq!(canonical_account(b58).unwrap(), hex);
-        assert!(canonical_account("ab0").unwrap_err().contains("neither 64 hex nor base58"));
+        assert!(canonical_account("ab0")
+            .unwrap_err()
+            .contains("neither 64 hex nor base58"));
         assert!(canonical_account("11").unwrap_err().contains("want 32"));
     }
 
@@ -539,10 +564,21 @@ mod tests {
             vec![0x0A, 0x01, b'x', 0x12, 0x00, 0x1A, 0x00, 0x22, 0x01, 0xff, 0x28, 0x01]
         );
         // Field 100, wire type 2: key (100 << 3) | 2 = 802 = varint A2 06.
-        let with_cfg = RlnGifterRequest { config_account_id: Some("c".into()), ..req };
-        let mut want = vec![0x0A, 0x01, b'x', 0x12, 0x00, 0x1A, 0x00, 0x22, 0x01, 0xff, 0x28, 0x01];
+        let with_cfg = RlnGifterRequest {
+            config_account_id: Some("c".into()),
+            ..req
+        };
+        let mut want = vec![
+            0x0A, 0x01, b'x', 0x12, 0x00, 0x1A, 0x00, 0x22, 0x01, 0xff, 0x28, 0x01,
+        ];
         want.extend_from_slice(&[0xA2, 0x06, 0x01, b'c']);
         assert_eq!(with_cfg.encode(), want);
-        assert_eq!(RlnGifterRequest::decode(&want).unwrap().config_account_id.as_deref(), Some("c"));
+        assert_eq!(
+            RlnGifterRequest::decode(&want)
+                .unwrap()
+                .config_account_id
+                .as_deref(),
+            Some("c")
+        );
     }
 }
