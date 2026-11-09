@@ -82,13 +82,16 @@ advertise_addr() {
 
 serve_json() {
     AV="${AUTH_VERIFIERS:-}" CFG="$REGISTRY_CONFIG" WAL="$PAYER" NUL="$NULLIFIERS" MAXR="$MAX_RATE_LIMIT" \
-    python3 -I -c '
+    ADV="$(advertise_addr)" BOOT="${KAD_BOOTSTRAP_NODES:-}" python3 -I -c '
 import json, os
 o = {"config": os.environ["CFG"], "wallet": os.environ["WAL"],
      "consumedNullifiersPath": os.environ["NUL"], "maxRateLimit": int(os.environ["MAXR"])}
 av = os.environ.get("AV", "")
 if av:
     o["authVerifiers"] = json.loads(av)
+o["advertiseAddrs"] = [os.environ["ADV"]]
+if os.environ["BOOT"].strip():
+    o["advertise"] = True
 print(json.dumps(o, separators=(",", ":")))
 '
 }

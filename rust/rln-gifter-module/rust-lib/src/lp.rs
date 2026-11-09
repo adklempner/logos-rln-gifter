@@ -34,6 +34,11 @@ pub fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
+/// The LIDL `bstr` wire form: `{"_bytes": "<base64url, unpadded>"}`.
+pub(crate) fn bstr(bytes: &[u8]) -> Value {
+    serde_json::json!({ "_bytes": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes) })
+}
+
 pub fn b64_decode(s: &str) -> Result<Vec<u8>, String> {
     base64::engine::general_purpose::STANDARD
         .decode(s)
@@ -245,6 +250,10 @@ fn parse_ok(raw: &str) -> Value {
 /// off it uses lp_invoke_async + a channel. `timeout_ms` is the explicit
 /// per-call budget.
 pub fn call_json(target: &str, method: &str, args: &Value, timeout_ms: i32) -> Result<Value, String> {
+    #[cfg(test)]
+    if let Some(r) = fake::intercept(target, method, args) {
+        return r;
+    }
     let client = client_ptr(target).ok_or_else(|| format!("no lp client for {target}"))?;
     let (Ok(method_c), Ok(args_c)) = (CString::new(method), CString::new(args.to_string())) else {
         return Err(format!("{method}: args not CString-safe"));
@@ -354,5 +363,131 @@ pub fn call_module_json(
         }
         Value::String(_) => Err(format!("{method}: empty reply")),
         other => Ok(other),
+    }
+}
+
+/// libp2p_module's `PeerDirection` ordinal for connections this node dialled:
+/// nim-libp2p's cbind declares `PeerDirection = enum Inbound, Outbound` and
+/// nim-ffi emits it as a C enum numbered from 0 (`PEER_DIRECTION_OUTBOUND`).
+pub(crate) const PEER_DIRECTION_OUTBOUND: i64 = 1;
+/// How long a client waits for its first outbound peer, polling once a second.
+/// Bootstrap peers sit unprobed in the routing table until dialled, so an
+/// outbound connection is the only sign the node has joined the DHT.
+pub(crate) const JOIN_WAIT_S: u64 = 20;
+const PEERS_TIMEOUT_MS: i32 = 10_000;
+
+/// How many outbound peers this node is connected to.
+pub(crate) fn outbound_peers() -> Result<usize, String> {
+    let v = call_libp2p("connectedPeers", &serde_json::json!([PEER_DIRECTION_OUTBOUND]), PEERS_TIMEOUT_MS)?;
+    v.as_array()
+        .map(Vec::len)
+        .ok_or_else(|| format!("connectedPeers: not a peer list: {v}"))
+}
+
+/// The outbound peer count once it is at least one, or after `JOIN_WAIT_S`
+/// (then 0). `Err` is a node whose libp2p cannot answer.
+pub(crate) fn wait_joined() -> Result<usize, String> {
+    let deadline = now_s() + JOIN_WAIT_S;
+    loop {
+        let n = outbound_peers()?;
+        if n > 0 || now_s() >= deadline {
+            return Ok(n);
+        }
+        sleep_s(1);
+    }
+}
+
+/// Unix seconds; under test, the installed fake's virtual clock.
+pub(crate) fn now_s() -> u64 {
+    #[cfg(test)]
+    if let Some(t) = fake::now() {
+        return t;
+    }
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Sleep; under test with a fake installed, advance its clock instead.
+pub(crate) fn sleep_s(s: u64) {
+    #[cfg(test)]
+    if fake::advance(s) {
+        return;
+    }
+    std::thread::sleep(Duration::from_secs(s));
+}
+
+/// A scripted stand-in for every cross-module call, per test thread: a
+/// thread without one installed reaches the FFI stub. Each intercepted call
+/// is logged, and the clock is virtual: `sleep_s` advances it.
+#[cfg(test)]
+pub(crate) mod fake {
+    use std::cell::RefCell;
+
+    use serde_json::Value;
+
+    pub(crate) type Handler = Box<dyn Fn(&str, &str, &Value) -> Result<Value, String> + Send>;
+
+    /// The virtual clock's reading right after `install`.
+    pub(crate) const START_S: u64 = 1_700_000_000;
+
+    struct State {
+        handler: Option<Handler>,
+        calls: Vec<(String, Value)>,
+        now: u64,
+    }
+
+    thread_local! {
+        static FAKE: RefCell<Option<State>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn install(handler: Handler) {
+        FAKE.with(|f| *f.borrow_mut() = Some(State { handler: Some(handler), calls: Vec::new(), now: START_S }));
+    }
+
+    pub(crate) fn clear() {
+        FAKE.with(|f| *f.borrow_mut() = None);
+    }
+
+    /// Every intercepted call so far, as (method, args).
+    pub(crate) fn calls() -> Vec<(String, Value)> {
+        FAKE.with(|f| f.borrow().as_ref().map(|s| s.calls.clone()).unwrap_or_default())
+    }
+
+    pub(crate) fn methods() -> Vec<String> {
+        calls().into_iter().map(|(m, _)| m).collect()
+    }
+
+    pub(crate) fn now() -> Option<u64> {
+        FAKE.with(|f| f.borrow().as_ref().map(|s| s.now))
+    }
+
+    /// Advance the virtual clock; false when no fake is installed.
+    pub(crate) fn advance(s: u64) -> bool {
+        FAKE.with(|f| match f.borrow_mut().as_mut() {
+            Some(st) => {
+                st.now += s;
+                true
+            }
+            None => false,
+        })
+    }
+
+    pub(super) fn intercept(target: &str, method: &str, args: &Value) -> Option<Result<Value, String>> {
+        // The handler runs outside the borrow, so it may read the clock.
+        let handler = FAKE.with(|f| {
+            let mut g = f.borrow_mut();
+            let st = g.as_mut()?;
+            st.calls.push((method.to_string(), args.clone()));
+            st.handler.take()
+        })?;
+        let r = handler(target, method, args);
+        FAKE.with(|f| {
+            if let Some(st) = f.borrow_mut().as_mut() {
+                st.handler = Some(handler);
+            }
+        });
+        Some(r)
     }
 }

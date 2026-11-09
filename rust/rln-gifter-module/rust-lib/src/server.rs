@@ -6,7 +6,7 @@
 // the funded payer's tx nonce stays ordered.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use rln_auth_vector::VerifyRequest;
@@ -42,6 +42,11 @@ const CONFIRM_POLL: std::time::Duration = std::time::Duration::from_secs(2);
 const GET_MEMBERSHIP_TIMEOUT_MS: i32 = 30_000;
 const MOUNT_TIMEOUT_MS: i32 = 30_000;
 const ADVERTISE_TIMEOUT_MS: i32 = 30_000;
+/// The worker reads the outbound peer count at most this often.
+const PEER_CHECK_S: u64 = 10;
+/// A caller-supplied record is published verbatim and never refreshed by
+/// libp2p (ad lifetime 900 s), so the worker re-places it at this age.
+const AD_REFRESH_S: u64 = 600;
 // Verifier modules may do their own IO (chain reads, HTTP), so the budget
 // is generous.
 const AUTH_VERIFY_TIMEOUT_MS: i32 = 30_000;
@@ -129,10 +134,29 @@ static CONSUMED_NULLIFIERS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 static MOUNTED: AtomicBool = AtomicBool::new(false);
 /// Whether the serve worker runs; from then on only it may call libp2p_module.
 static SERVING: AtomicBool = AtomicBool::new(false);
-/// The service data this node should advertise (None = nothing), and what it
-/// currently advertises.
-static WANTED_AD: Mutex<Option<String>> = Mutex::new(None);
-static ADVERTISED: Mutex<Option<String>> = Mutex::new(None);
+/// What an advertisement carries: the service data, and the addresses of a
+/// caller-supplied record (`createXpr`) or None for libp2p's self-built one.
+#[derive(Clone, Debug, PartialEq)]
+struct AdSpec {
+    data: String,
+    addrs: Option<Vec<String>>,
+}
+
+/// A placed advertisement: what, when (unix s), and the outbound peer count
+/// last seen since.
+#[derive(Clone, Debug)]
+struct Placed {
+    spec: AdSpec,
+    at: u64,
+    peers: usize,
+}
+
+/// The advertisement this node should place (None = nothing), and what it
+/// currently has placed.
+static WANTED_AD: Mutex<Option<AdSpec>> = Mutex::new(None);
+static ADVERTISED: Mutex<Option<Placed>> = Mutex::new(None);
+/// When the worker last read the outbound peer count (unix s).
+static PEERS_CHECKED_AT: AtomicU64 = AtomicU64::new(0);
 
 fn blob(v: Value) -> Value {
     // Single JSON-blob arg wrapped in a positional args array, as the
@@ -154,15 +178,31 @@ fn served_pairs(served: &[String], auth_verifiers: &HashMap<String, (String, Opt
         .collect()
 }
 
+/// A signed record for `addrs` carrying `data` under the service id, as the
+/// base64 `createXpr` returns.
+fn create_xpr(addrs: &[String], data: &str, seq_no: u64) -> Result<String, String> {
+    let mut services = serde_json::Map::new();
+    services.insert(RLN_GIFTER_SERVICE_ID.to_string(), lp::bstr(data.as_bytes()));
+    let v = lp::call_libp2p("createXpr", &json!([addrs, services, seq_no]), ADVERTISE_TIMEOUT_MS)
+        .map_err(|e| format!("createXpr: {e}"))?;
+    v.as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("createXpr: no record in {v}"))
+}
+
 /// Bring the advertisement in line with `WANTED_AD`: the one service id,
-/// the served pairs in its data. A changed data stops the previous
-/// advertisement first (libp2p refuses to replace one in place); unchanged
-/// data is left alone. Called where libp2p_module can answer: by `serve`
-/// before the worker exists, by the worker between accepts afterwards.
-fn reconcile_advertisement() -> Result<(), String> {
+/// the served pairs in its data. A changed advertisement, or `renew`, stops
+/// the placed one first (libp2p refuses to replace one in place); an
+/// unchanged one is left alone. A caller-supplied record gets a seqNo above
+/// every earlier one. `peers` is the outbound peer count it is placed with.
+/// Called where libp2p_module can answer: by `serve` before the worker
+/// exists, by the worker between accepts afterwards.
+fn reconcile_advertisement(renew: bool, peers: usize) -> Result<(), String> {
+    static LAST_SEQ_NO: AtomicU64 = AtomicU64::new(0);
     let wanted = lock(&WANTED_AD).clone();
     let mut current = lock(&ADVERTISED);
-    if *current == wanted {
+    if !renew && current.as_ref().map(|p| &p.spec) == wanted.as_ref() {
         return Ok(());
     }
     if current.is_some() {
@@ -170,21 +210,57 @@ fn reconcile_advertisement() -> Result<(), String> {
             .map_err(|e| format!("discoStopAdvertising: {e}"))?;
         *current = None;
     }
-    if let Some(data) = wanted {
+    if let Some(spec) = wanted {
+        let at = lp::now_s();
+        let seq_no = at.max(LAST_SEQ_NO.load(Ordering::SeqCst) + 1);
+        let record = match &spec.addrs {
+            Some(addrs) => create_xpr(addrs, &spec.data, seq_no)?,
+            None => String::new(),
+        };
         lp::call_libp2p(
             "discoStartAdvertising",
-            &json!([RLN_GIFTER_SERVICE_ID, data.as_str(), ""]),
+            &json!([RLN_GIFTER_SERVICE_ID, spec.data.as_str(), record]),
             ADVERTISE_TIMEOUT_MS,
         )
         .map_err(|e| format!("discoStartAdvertising: {e}"))?;
-        *current = Some(data);
+        if spec.addrs.is_some() {
+            LAST_SEQ_NO.store(seq_no, Ordering::SeqCst);
+        }
+        PEERS_CHECKED_AT.store(at, Ordering::SeqCst);
+        *current = Some(Placed { spec, at, peers });
     }
     Ok(())
 }
 
+/// The worker's advertisement upkeep between two accepts: apply a re-serve's
+/// change, and re-place an unchanged advertisement once outbound peers
+/// appear after it was placed with none (its registration reached nobody)
+/// or once a caller-supplied record reaches `AD_REFRESH_S`. The peer count
+/// is read at most every `PEER_CHECK_S`.
+fn advertisement_tick() -> Result<(), String> {
+    let now = lp::now_s();
+    let placed = lock(&ADVERTISED).clone();
+    let mut peers = placed.as_ref().map(|p| p.peers).unwrap_or(0);
+    let mut renew = false;
+    if let Some(p) = &placed {
+        if now >= PEERS_CHECKED_AT.load(Ordering::SeqCst) + PEER_CHECK_S {
+            PEERS_CHECKED_AT.store(now, Ordering::SeqCst);
+            if let Ok(n) = lp::outbound_peers() {
+                renew |= p.peers == 0 && n > 0;
+                peers = n;
+                if let Some(cur) = lock(&ADVERTISED).as_mut() {
+                    cur.peers = n;
+                }
+            }
+        }
+        renew |= p.spec.addrs.is_some() && now >= p.at + AD_REFRESH_S;
+    }
+    reconcile_advertisement(renew, peers)
+}
+
 /// Server entry point (the trait's `serve`): args
 /// `{config, wallet, registries?, authVerifiers?, consumedNullifiersPath?,
-///  maxRateLimit?, advertise?}`.
+///  maxRateLimit?, advertise?, advertiseAddrs?}`.
 /// `config` is the registry a request naming none is served on; `registries`
 /// adds further served ones (`"<config>"`, or `{"config", "maxRateLimit"?}`
 /// for a cap of its own) — a request names its registry on the wire and one
@@ -202,12 +278,20 @@ fn reconcile_advertisement() -> Result<(), String> {
 /// have discovery mounted (`mountServiceDiscovery`) and a registrar peer in
 /// its routing table. Left to its default, a node without discovery serves
 /// unadvertised and the reply says why; an explicit `true` makes that an
-/// error. At most 8 pairs fit an advertisement. While the worker serves,
+/// error. At most 8 pairs fit an advertisement. `advertiseAddrs` (multiaddr
+/// strings) advertises a record built for those addresses (`createXpr`),
+/// which libp2p never refreshes, so the worker re-places it every
+/// `AD_REFRESH_S`; absent, libp2p builds and republishes the record from its
+/// listen addresses. The advertisement is placed at once, never waiting
+/// for peers; `advertisedToPeers` is the outbound peer count then (its
+/// registration reaches only connected registrars), and one placed with
+/// none is re-placed by the worker once outbound peers appear. While the
+/// worker serves,
 /// libp2p_module answers only it, so a re-serve that changes the
 /// advertisement hands the change to the worker (`advertisePending`).
 /// Mounts the protocol and starts the serialized serve worker. Returns
 /// `{mounted:true, registries:[…], advertised:bool, advertisePending?,
-///  serviceId?, serviceData?, advertiseError?}`.
+///  serviceId?, serviceData?, advertisedToPeers?, advertiseError?}`.
 pub fn serve(args_json: &str) -> Result<Value, String> {
     let a: Value = serde_json::from_str(args_json).map_err(|e| format!("serve args: {e}"))?;
     let config = a.get("config").and_then(Value::as_str).ok_or("missing config")?.to_string();
@@ -219,6 +303,17 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
         None | Some(Value::Null) => None,
         Some(Value::Bool(b)) => Some(*b),
         Some(_) => return Err("advertise must be a boolean".into()),
+    };
+    let advertise_addrs = match a.get("advertiseAddrs") {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(items)) => Some(
+            items
+                .iter()
+                .map(|v| v.as_str().map(str::to_owned))
+                .collect::<Option<Vec<String>>>()
+                .ok_or("advertiseAddrs must be an array of multiaddr strings")?,
+        ),
+        Some(_) => return Err("advertiseAddrs must be an array of multiaddr strings".into()),
     };
     let (registries, served) = parse_registries(&a, &config, max_rate_limit)?;
     let default_config = served[0].clone();
@@ -277,10 +372,11 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
         reply["serviceId"] = json!(RLN_GIFTER_SERVICE_ID);
         reply["serviceData"] = json!(data);
     }
-    *lock(&WANTED_AD) = data.clone();
+    let wanted = data.clone().map(|data| AdSpec { data, addrs: advertise_addrs });
+    *lock(&WANTED_AD) = wanted.clone();
     if SERVING.load(Ordering::SeqCst) {
         // The worker owns libp2p_module: it reconciles between accepts.
-        if *lock(&ADVERTISED) == data {
+        if lock(&ADVERTISED).as_ref().map(|p| &p.spec) == wanted.as_ref() {
             reply["advertised"] = json!(data.is_some());
         } else {
             reply["advertisePending"] = json!(true);
@@ -292,11 +388,7 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
     // makes clients wait out their whole budget. The moments between the two
     // calls cost a client at most a refused dial, which it treats as "try the
     // next allocator".
-    match reconcile_advertisement() {
-        Ok(()) => reply["advertised"] = json!(data.is_some()),
-        Err(e) if advertise_wanted == Some(true) => return Err(format!("advertise: {e}")),
-        Err(e) => reply["advertiseError"] = json!(e),
-    }
+    advertise_first(&mut reply, advertise_wanted)?;
     // Mount exactly once; re-calling serve just refreshes the config above
     // (e.g. a new wallet or verifier set) and the advertisement.
     if !MOUNTED.swap(true, Ordering::SeqCst) {
@@ -313,12 +405,30 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
     Ok(reply)
 }
 
+/// `serve`'s advertisement before the worker exists: place `WANTED_AD` at
+/// once with the outbound peer count read once (0 when libp2p cannot say),
+/// into `reply` as `advertised`, `advertisedToPeers` and `advertiseError`.
+/// An explicit `advertise: true` makes a failure the error.
+fn advertise_first(reply: &mut Value, advertise_wanted: Option<bool>) -> Result<(), String> {
+    let wanted = lock(&WANTED_AD).is_some();
+    let peers = if wanted { lp::outbound_peers().unwrap_or(0) } else { 0 };
+    if wanted {
+        reply["advertisedToPeers"] = json!(peers);
+    }
+    match reconcile_advertisement(false, peers) {
+        Ok(()) => reply["advertised"] = json!(wanted),
+        Err(e) if advertise_wanted == Some(true) => return Err(format!("advertise: {e}")),
+        Err(e) => reply["advertiseError"] = json!(e),
+    }
+    Ok(())
+}
+
 // One serialized worker: accept → read → auth → register → respond, one request
 // at a time. Serializing register_member keeps the funded wallet nonce ordered.
 // Between accepts it applies the advertisement a re-serve asked for.
 fn worker_loop() {
     loop {
-        if let Err(e) = reconcile_advertisement() {
+        if let Err(e) = advertisement_tick() {
             eprintln!("rln_gifter serve: advertisement: {e}");
         }
         // call_libp2p unwraps the StdLogosResult envelope {success,error,value}
@@ -843,6 +953,7 @@ mod tests {
 
     #[test]
     fn an_unserved_registry_is_refused_before_anything_else() {
+        let _g = lock(&AD_STATE);
         *lock(&SERVER) = Some(served(json!({})));
         let mut idc = vec![0xab; 32];
         idc[31] = 0x0a;
@@ -904,5 +1015,186 @@ mod tests {
         assert!(e.contains("needs a module"), "got: {e}");
         let e = serve(r#"{"config":"c","wallet":"w"}"#).unwrap_err();
         assert!(e.contains("config account 'c'"), "got: {e}");
+    }
+
+    // The advertisement statics are process-wide; tests that set them hold this.
+    static AD_STATE: Mutex<()> = Mutex::new(());
+
+    fn reset_ads() {
+        *lock(&WANTED_AD) = None;
+        *lock(&ADVERTISED) = None;
+        PEERS_CHECKED_AT.store(0, Ordering::SeqCst);
+    }
+
+    /// A libp2p that accepts every advertisement verb, connects `peers()`
+    /// outbound peers, signs any record as "XPRB64" and refuses the mount.
+    fn scripted_libp2p(peers: impl Fn() -> usize + Send + 'static) {
+        lp::fake::install(Box::new(move |_, method, _| match method {
+            "connectedPeers" => Ok(json!((0..peers()).map(|i| format!("P{i}")).collect::<Vec<_>>())),
+            "createXpr" => Ok(json!({ "success": true, "value": "XPRB64", "error": "" })),
+            "discoStartAdvertising" | "discoStopAdvertising" => Ok(json!(true)),
+            "mountProtocol" => Err("refused in test".into()),
+            m => Err(format!("unscripted {m}")),
+        }));
+    }
+
+    fn ad_calls() -> Vec<(String, Value)> {
+        lp::fake::calls().into_iter().filter(|(m, _)| m != "connectedPeers").collect()
+    }
+
+    #[test]
+    fn advertise_addrs_place_a_record_signed_for_them() {
+        let _g = lock(&AD_STATE);
+        reset_ads();
+        scripted_libp2p(|| 1);
+        let addrs = ["/ip4/203.0.113.7/tcp/4001"];
+        let e = serve(&json!({ "config": acct(1), "wallet": "w", "advertiseAddrs": addrs }).to_string()).unwrap_err();
+        assert_eq!(e, "mountProtocol: refused in test");
+        let data = service_data(&[(acct(1), String::new())]).unwrap();
+        let b64url = base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, data.as_bytes());
+        assert_eq!(
+            ad_calls(),
+            [
+                (
+                    "createXpr".to_string(),
+                    json!([addrs, { RLN_GIFTER_SERVICE_ID: { "_bytes": b64url } }, lp::fake::START_S])
+                ),
+                ("discoStartAdvertising".to_string(), json!([RLN_GIFTER_SERVICE_ID, data, "XPRB64"])),
+                ("mountProtocol".to_string(), json!([RLN_GIFTER_CODEC])),
+            ]
+        );
+        assert_eq!(lp::fake::methods()[0], "connectedPeers");
+        let e = serve(&json!({ "config": acct(1), "wallet": "w", "advertiseAddrs": [7] }).to_string()).unwrap_err();
+        assert!(e.contains("advertiseAddrs must be an array"), "got: {e}");
+        lp::fake::clear();
+        reset_ads();
+    }
+
+    #[test]
+    fn without_advertise_addrs_libp2p_builds_the_record() {
+        let _g = lock(&AD_STATE);
+        reset_ads();
+        scripted_libp2p(|| 1);
+        let _ = serve(&json!({ "config": acct(1), "wallet": "w" }).to_string());
+        let data = service_data(&[(acct(1), String::new())]).unwrap();
+        assert_eq!(ad_calls()[0], ("discoStartAdvertising".to_string(), json!([RLN_GIFTER_SERVICE_ID, data, ""])));
+        lp::fake::clear();
+        reset_ads();
+    }
+
+    #[test]
+    fn the_first_advertisement_is_placed_at_once_and_re_placed_when_peers_appear() {
+        let _g = lock(&AD_STATE);
+        let start = lp::fake::START_S;
+        let spec = AdSpec { data: "1abc".into(), addrs: None };
+
+        // Two peers up: placed with them, one peer read, no wait.
+        reset_ads();
+        scripted_libp2p(|| 2);
+        *lock(&WANTED_AD) = Some(spec.clone());
+        let mut reply = json!({});
+        advertise_first(&mut reply, None).unwrap();
+        assert_eq!(reply, json!({ "advertised": true, "advertisedToPeers": 2 }));
+        assert_eq!(lp::fake::methods(), ["connectedPeers", "discoStartAdvertising"]);
+        assert_eq!(lp::now_s(), start);
+
+        // libp2p cannot count peers: placed with 0 regardless.
+        reset_ads();
+        lp::fake::install(Box::new(|_, m, _| match m {
+            "connectedPeers" => Err("connectedPeers: libp2p down".into()),
+            _ => Ok(json!(true)),
+        }));
+        *lock(&WANTED_AD) = Some(spec.clone());
+        let mut reply = json!({});
+        advertise_first(&mut reply, None).unwrap();
+        assert_eq!(reply, json!({ "advertised": true, "advertisedToPeers": 0 }));
+        assert_eq!(lp::now_s(), start);
+
+        // No peer yet: placed with 0 at once, then the worker re-places it
+        // once peers appear.
+        reset_ads();
+        let up = std::sync::Arc::new(AtomicBool::new(false));
+        let u = up.clone();
+        scripted_libp2p(move || usize::from(u.load(Ordering::SeqCst)));
+        *lock(&WANTED_AD) = Some(spec);
+        let mut reply = json!({});
+        advertise_first(&mut reply, None).unwrap();
+        assert_eq!(reply, json!({ "advertised": true, "advertisedToPeers": 0 }));
+        assert_eq!(lp::now_s(), start);
+        assert_eq!(ad_calls().len(), 1);
+        up.store(true, Ordering::SeqCst);
+        lp::fake::advance(PEER_CHECK_S);
+        advertisement_tick().unwrap();
+        let methods: Vec<String> = ad_calls().into_iter().map(|(m, _)| m).collect();
+        assert_eq!(methods, ["discoStartAdvertising", "discoStopAdvertising", "discoStartAdvertising"]);
+        assert_eq!(lock(&ADVERTISED).as_ref().map(|p| p.peers), Some(1));
+        lp::fake::clear();
+        reset_ads();
+    }
+
+    #[test]
+    fn the_worker_re_places_the_advertisement_when_peers_appear_or_it_ages() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::Arc;
+        let _g = lock(&AD_STATE);
+        let start = lp::fake::START_S;
+        let peers = Arc::new(AtomicUsize::new(0));
+        let place = |addrs: Option<Vec<String>>, peers: usize| {
+            reset_ads();
+            let spec = AdSpec { data: "1abc".into(), addrs };
+            *lock(&WANTED_AD) = Some(spec.clone());
+            *lock(&ADVERTISED) = Some(Placed { spec, at: start, peers });
+            PEERS_CHECKED_AT.store(start, Ordering::SeqCst);
+        };
+        let ad_methods = || ad_calls().into_iter().map(|(m, _)| m).collect::<Vec<_>>();
+
+        // Placed with no peer: the check is rate-limited, re-places on 0 → 1
+        // and only then.
+        place(None, 0);
+        let p = peers.clone();
+        scripted_libp2p(move || p.load(Ordering::SeqCst));
+        lp::fake::advance(5);
+        advertisement_tick().unwrap();
+        assert!(lp::fake::calls().is_empty());
+        lp::fake::advance(5);
+        advertisement_tick().unwrap();
+        assert_eq!(lp::fake::methods(), ["connectedPeers"]);
+        peers.store(1, Ordering::SeqCst);
+        advertisement_tick().unwrap();
+        assert_eq!(lp::fake::methods(), ["connectedPeers"], "within PEER_CHECK_S of the last check");
+        lp::fake::advance(PEER_CHECK_S);
+        advertisement_tick().unwrap();
+        assert_eq!(ad_methods(), ["discoStopAdvertising", "discoStartAdvertising"]);
+        lp::fake::advance(PEER_CHECK_S);
+        advertisement_tick().unwrap();
+        assert_eq!(ad_methods().len(), 2, "peers stayed up: nothing to re-place");
+
+        // A self-built record is never re-placed for age.
+        place(None, 1);
+        scripted_libp2p(|| 1);
+        lp::fake::advance(AD_REFRESH_S * 2);
+        advertisement_tick().unwrap();
+        assert!(ad_methods().is_empty());
+
+        // A caller-supplied record is, at AD_REFRESH_S, under a fresh seqNo.
+        let addrs = vec!["/ip4/203.0.113.7/tcp/4001".to_string()];
+        place(Some(addrs.clone()), 1);
+        scripted_libp2p(|| 1);
+        lp::fake::advance(AD_REFRESH_S - 1);
+        advertisement_tick().unwrap();
+        assert!(ad_methods().is_empty());
+        lp::fake::advance(1);
+        advertisement_tick().unwrap();
+        let calls = ad_calls();
+        assert_eq!(calls.iter().map(|(m, _)| m.as_str()).collect::<Vec<_>>(), ["discoStopAdvertising", "createXpr", "discoStartAdvertising"]);
+        assert_eq!(calls[1].1[2], json!(start + AD_REFRESH_S));
+        assert_eq!(lock(&ADVERTISED).as_ref().map(|p| p.at), Some(start + AD_REFRESH_S));
+
+        // A re-serve's change applies at once, whatever the clock.
+        *lock(&WANTED_AD) = Some(AdSpec { data: "1xyz".into(), addrs: None });
+        advertisement_tick().unwrap();
+        assert_eq!(ad_calls().last().unwrap(), &("discoStartAdvertising".to_string(), json!([RLN_GIFTER_SERVICE_ID, "1xyz", ""])));
+        lp::fake::clear();
+        reset_ads();
     }
 }

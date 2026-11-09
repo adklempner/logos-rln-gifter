@@ -79,35 +79,67 @@ fn candidates_in(reply: &Value, registry_hex: &str, auth_type: &str) -> Vec<Cand
     out
 }
 
-/// Look the allocators serving this pair up through libp2p service
-/// discovery, polling until one answers or the budget ends. `Err` is a
-/// node that cannot discover at all (no discovery mounted, libp2p down).
-fn lookup(registry_hex: &str, auth_type: &str) -> Result<Vec<Candidate>, String> {
-    // Interest first: it builds the per-service routing table the lookups
-    // query; a repeat is harmless.
-    let _ = lp::call_libp2p(
-        "discoRegisterInterest",
-        &json!([RLN_GIFTER_SERVICE_ID]),
-        DISCO_TIMEOUT_MS,
-    );
-    for wait in LOOKUP_WAITS_S {
-        if wait > 0 {
-            std::thread::sleep(std::time::Duration::from_secs(wait));
-        }
-        let reply = lp::call_libp2p("discoLookup", &json!([RLN_GIFTER_SERVICE_ID, ""]), DISCO_TIMEOUT_MS)?;
-        let found = candidates_in(&reply, registry_hex, auth_type);
-        if !found.is_empty() {
-            return Ok(found);
+/// What service discovery found for a pair. `Unavailable` is a node that
+/// cannot discover at all (no discovery mounted, libp2p down); `NotJoined`
+/// and `NoneAdvertising` may change on a later try.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Discovery {
+    Unavailable(String),
+    NotJoined,
+    NoneAdvertising,
+    Found(Vec<Candidate>),
+}
+
+impl Discovery {
+    /// The outcome's text on the module wire (read by the membership module).
+    fn message(&self, registry_hex: &str, auth_type: &str) -> String {
+        match self {
+            Discovery::Unavailable(e) => format!("discovery unavailable: {e}"),
+            Discovery::NotJoined => format!("discovery not joined: no connected peer after {}s", lp::JOIN_WAIT_S),
+            Discovery::NoneAdvertising => format!("no allocator advertises {registry_hex}/{auth_type}"),
+            Discovery::Found(_) => String::new(),
         }
     }
-    Ok(Vec::new())
+}
+
+/// Look the allocators serving this pair up through libp2p service
+/// discovery: register interest, wait for an outbound peer, then poll the
+/// lookup until one answers or the budget ends. Also the outbound peer count
+/// the join wait ended with.
+fn lookup(registry_hex: &str, auth_type: &str) -> (Discovery, usize) {
+    // Interest first: it builds the per-service routing table the lookups
+    // query; a repeat is harmless.
+    if let Err(e) = lp::call_libp2p("discoRegisterInterest", &json!([RLN_GIFTER_SERVICE_ID]), DISCO_TIMEOUT_MS) {
+        return (Discovery::Unavailable(e), 0);
+    }
+    let peers = match lp::wait_joined() {
+        Ok(0) => return (Discovery::NotJoined, 0),
+        Ok(n) => n,
+        Err(e) => return (Discovery::Unavailable(e), 0),
+    };
+    for wait in LOOKUP_WAITS_S {
+        if wait > 0 {
+            lp::sleep_s(wait);
+        }
+        let reply = match lp::call_libp2p("discoLookup", &json!([RLN_GIFTER_SERVICE_ID, ""]), DISCO_TIMEOUT_MS) {
+            Ok(r) => r,
+            Err(e) => return (Discovery::Unavailable(e), peers),
+        };
+        let found = candidates_in(&reply, registry_hex, auth_type);
+        if !found.is_empty() {
+            return (Discovery::Found(found), peers);
+        }
+    }
+    (Discovery::NoneAdvertising, peers)
 }
 
 /// The trait's `discover`: args `{config, authType?}` → the allocators
 /// currently advertising that (registry, auth type) pair,
-/// `{serviceId, candidates:[{peerId, addrs}]}`; `config` names the registry
-/// (the advertisement digests are per registry), `authType` absent means an
-/// open allocator.
+/// `{serviceId, candidates:[{peerId, addrs}], joined, peers}`; `config` names
+/// the registry (the advertisement digests are per registry), `authType`
+/// absent means an open allocator. `joined` is whether an outbound peer
+/// connected within the join wait, `peers` how many. A node that cannot
+/// discover is an error, `discovery unavailable: <why>`.
 pub fn discover(args_json: &str) -> Result<Value, String> {
     let a: Value = serde_json::from_str(args_json).map_err(|e| format!("discover args: {e}"))?;
     let registry = a
@@ -118,11 +150,49 @@ pub fn discover(args_json: &str) -> Result<Value, String> {
         .ok_or("discover needs config (the registry)")?;
     let registry = crate::wire::canonical_account(registry)?;
     let auth_type = a.get("authType").and_then(Value::as_str).unwrap_or("");
-    let candidates = lookup(&registry, auth_type)?;
+    let (outcome, peers) = lookup(&registry, auth_type);
+    let candidates = match &outcome {
+        Discovery::Unavailable(_) => return Err(outcome.message(&registry, auth_type)),
+        Discovery::Found(c) => c.iter().map(Candidate::json).collect::<Vec<_>>(),
+        Discovery::NotJoined | Discovery::NoneAdvertising => Vec::new(),
+    };
     Ok(json!({
         "serviceId": RLN_GIFTER_SERVICE_ID,
-        "candidates": candidates.iter().map(Candidate::json).collect::<Vec<_>>(),
+        "candidates": candidates,
+        "joined": outcome != Discovery::NotJoined,
+        "peers": peers,
     }))
+}
+
+/// A failed `request`: the error text and, when an allocator's own reply
+/// ended it, that allocator and whether discovery found it.
+#[derive(Debug)]
+pub(crate) struct Failure {
+    pub(crate) error: String,
+    pub(crate) gifter: Option<(String, bool)>,
+}
+
+impl Failure {
+    pub(crate) fn json(&self) -> Value {
+        let mut out = json!({ "error": self.error });
+        if let Some((peer, discovered)) = &self.gifter {
+            out["gifterPeerId"] = json!(peer);
+            out["discovered"] = json!(discovered);
+        }
+        out
+    }
+}
+
+impl From<String> for Failure {
+    fn from(error: String) -> Self {
+        Failure { error, gifter: None }
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(error: &str) -> Self {
+        Failure { error: error.to_string(), gifter: None }
+    }
 }
 
 /// Why one allocator did not grant: before it read the request (another
@@ -141,8 +211,10 @@ impl Attempt {
 }
 
 /// One request→response with one allocator over the generic libp2p bridge,
-/// to the caller's grant shape.
-fn ask(peer_id: &str, addrs: &[String], req: &RlnGifterRequest, config: Option<&str>) -> Result<Value, Attempt> {
+/// to the caller's grant shape; a failure says whether the allocator's own
+/// reply gave it.
+fn ask(peer_id: &str, addrs: &[String], req: &RlnGifterRequest, config: Option<&str>) -> Result<Value, (Attempt, bool)> {
+    let unreplied = |a: Attempt| (a, false);
     let pr_args = json!({
         "peerId": peer_id,
         "multiaddrs": addrs,
@@ -154,20 +226,23 @@ fn ask(peer_id: &str, addrs: &[String], req: &RlnGifterRequest, config: Option<&
         Ok(v) => v,
         // Nothing reached the allocator: the dial or the write failed.
         Err(e) if e.contains("dial failed") || e.contains("dial returned no stream") || e.contains("write failed") => {
-            return Err(Attempt::Next(e))
+            return Err(unreplied(Attempt::Next(e)))
         }
-        Err(e) => return Err(Attempt::Stop(e)),
+        Err(e) => return Err(unreplied(Attempt::Stop(e))),
     };
     let resp_b64 = pr
         .get("responseB64")
         .and_then(Value::as_str)
-        .ok_or_else(|| Attempt::Stop(format!("protocolRequest: no responseB64 in {pr}")))?;
-    let resp = RlnGifterResponse::decode(&b64_decode(resp_b64).map_err(Attempt::Stop)?).map_err(Attempt::Stop)?;
+        .ok_or_else(|| unreplied(Attempt::Stop(format!("protocolRequest: no responseB64 in {pr}"))))?;
+    let resp = RlnGifterResponse::decode(&b64_decode(resp_b64).map_err(|e| unreplied(Attempt::Stop(e)))?)
+        .map_err(|e| unreplied(Attempt::Stop(e)))?;
 
     if resp.request_id != req.request_id {
-        return Err(Attempt::Stop("gifter response requestId mismatch".into()));
+        return Err(unreplied(Attempt::Stop("gifter response requestId mismatch".into())));
     }
-    judge(resp, config).map(|success| grant_json(peer_id, &req.identity_commitment, success))
+    judge(resp, config)
+        .map(|success| grant_json(peer_id, &req.identity_commitment, success))
+        .map_err(|a| (a, true))
 }
 
 /// The grant, or why not and whether another allocator may be asked: a
@@ -240,8 +315,11 @@ fn grant_json(peer_id: &str, identity_commitment: &[u8], success: MembershipAllo
 /// the configured `gifterPeerId`+`gifterMultiaddr` pair comes after them.
 /// A grant on another registry is an error.
 /// Returns `{leaf_index, id_commitment, auth_success, identity_adopted,
-///  gifterPeerId, discovered, tx_hash?, config_account?}`.
-pub fn request(args_json: &str) -> Result<Value, String> {
+///  gifterPeerId, discovered, tx_hash?, config_account?}`. A failure whose
+/// last allocator tried answered the request itself (a refusal, a
+/// registration not submitted or unconfirmed) names it: `gifterPeerId` and
+/// `discovered` ride along with the error text.
+pub fn request(args_json: &str) -> Result<Value, Failure> {
     let a: Value = serde_json::from_str(args_json).map_err(|e| format!("request args: {e}"))?;
     let gifter_peer_id = a.get("gifterPeerId").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
     let gifter_multiaddr = a.get("gifterMultiaddr").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty());
@@ -329,7 +407,7 @@ pub fn request(args_json: &str) -> Result<Value, String> {
         hex::decode(reply.payload_hex.trim_start_matches("0x"))
             .map_err(|e| format!("auth provider payload hex: {e}"))?
     } else {
-        return Err(format!("authType '{auth_type_req}' needs authPayload or authProvider"));
+        return Err(format!("authType '{auth_type_req}' needs authPayload or authProvider").into());
     };
 
     let request_id = format!("gift-{}", &id_commitment_hex[..id_commitment_hex.len().min(16)]);
@@ -343,30 +421,35 @@ pub fn request(args_json: &str) -> Result<Value, String> {
     };
 
     // Discovered allocators first, rotated by the commitment so clients
-    // spread over them; then the configured one.
+    // spread over them; then the configured one. `last_reply` is the last
+    // allocator tried when its own reply refused.
     let mut tried: Vec<String> = Vec::new();
+    let mut last_reply: Option<(String, bool)> = None;
     if let (true, Some(registry)) = (discover, config.as_deref()) {
-        match lookup(registry, auth_type_req) {
-            Ok(mut found) => {
-                if !found.is_empty() {
-                    let at = req.identity_commitment[0] as usize % found.len();
-                    found.rotate_left(at);
-                }
+        match lookup(registry, auth_type_req).0 {
+            Discovery::Found(mut found) => {
+                let at = req.identity_commitment[0] as usize % found.len();
+                found.rotate_left(at);
                 for c in &found {
                     match ask(&c.peer_id, &c.addrs, &req, config.as_deref()) {
                         Ok(mut out) => {
                             out["discovered"] = json!(true);
                             return Ok(out);
                         }
-                        Err(Attempt::Next(e)) => tried.push(format!("{}: {e}", c.peer_id)),
-                        Err(Attempt::Stop(e)) => return Err(format!("{}: {e}", c.peer_id)),
+                        Err((Attempt::Next(e), replied)) => {
+                            tried.push(format!("{}: {e}", c.peer_id));
+                            last_reply = replied.then(|| (c.peer_id.clone(), true));
+                        }
+                        Err((Attempt::Stop(e), replied)) => {
+                            return Err(Failure {
+                                error: format!("{}: {e}", c.peer_id),
+                                gifter: replied.then(|| (c.peer_id.clone(), true)),
+                            })
+                        }
                     }
                 }
-                if found.is_empty() {
-                    tried.push(format!("no allocator advertises {registry}/{auth_type_req}"));
-                }
             }
-            Err(e) => tried.push(format!("discovery unavailable: {e}")),
+            outcome => tried.push(outcome.message(registry, auth_type_req)),
         }
     }
     if let Some((peer_id, multiaddr)) = &configured {
@@ -375,15 +458,27 @@ pub fn request(args_json: &str) -> Result<Value, String> {
                 out["discovered"] = json!(false);
                 Ok(out)
             }
-            Err(e) => Err(if tried.is_empty() { e.message() } else { format!("{}; before that: {}", e.message(), tried.join("; ")) }),
+            Err((e, replied)) => Err(Failure {
+                error: if tried.is_empty() { e.message() } else { format!("{}; before that: {}", e.message(), tried.join("; ")) },
+                gifter: replied.then(|| (peer_id.clone(), false)),
+            }),
         };
     }
-    Err(format!("no allocator granted and none is configured: {}", tried.join("; ")))
+    Err(Failure {
+        error: format!("no allocator granted and none is configured: {}", tried.join("; ")),
+        gifter: last_reply,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The error text alone; the tests of the structured failure call
+    // `super::request`.
+    fn request(args_json: &str) -> Result<Value, String> {
+        super::request(args_json).map_err(|f| f.error)
+    }
 
     fn req(extra: &str) -> Result<Value, String> {
         request(&format!(
@@ -533,5 +628,135 @@ mod tests {
         ))
         .unwrap_err();
         assert!(!e.contains("id_commitment hex"), "got: {e}");
+    }
+
+    type Script = fn(&str, &Value) -> Option<Result<Value, String>>;
+
+    /// A libp2p with discovery mounted, `peers` outbound peers, the lookup
+    /// reply `records`, and `extra` answering anything else first.
+    fn scripted(peers: usize, records: Value, extra: Script) {
+        lp::fake::install(Box::new(move |_, method, args| {
+            if let Some(r) = extra(method, args) {
+                return r;
+            }
+            match method {
+                "discoRegisterInterest" => Ok(json!(true)),
+                "connectedPeers" => Ok(json!((0..peers).map(|i| format!("P{i}")).collect::<Vec<_>>())),
+                "discoLookup" => Ok(records.clone()),
+                m => Err(format!("unscripted {m}")),
+            }
+        }));
+    }
+
+    fn no_extra(_: &str, _: &Value) -> Option<Result<Value, String>> {
+        None
+    }
+
+    fn registry() -> String {
+        hex::encode([0xd; 32])
+    }
+
+    fn advertising(peer: &str, auth_type: &str) -> Value {
+        let data = crate::wire::service_data(&[(registry(), auth_type.into())]).unwrap();
+        json!([{ "peerId": peer, "seqNo": 1, "addrs": ["/ip4/127.0.0.1/tcp/1"],
+                 "services": [{ "id": RLN_GIFTER_SERVICE_ID, "data": b64(data.as_bytes()) }] }])
+    }
+
+    #[test]
+    fn a_lookup_says_why_it_found_nobody() {
+        let (r, t) = (registry(), "peer-any");
+
+        lp::fake::install(Box::new(|_, m, _| Err(format!("{m}: service discovery not mounted"))));
+        let (d, _) = lookup(&r, t);
+        assert_eq!(d.message(&r, t), "discovery unavailable: discoRegisterInterest: service discovery not mounted");
+
+        scripted(0, json!([]), no_extra);
+        assert_eq!(lookup(&r, t), (Discovery::NotJoined, 0));
+        assert_eq!(Discovery::NotJoined.message(&r, t), "discovery not joined: no connected peer after 20s");
+        assert_eq!(lp::now_s(), lp::fake::START_S + lp::JOIN_WAIT_S);
+        assert!(!lp::fake::methods().iter().any(|m| m == "discoLookup"));
+
+        scripted(2, json!([]), no_extra);
+        assert_eq!(lookup(&r, t), (Discovery::NoneAdvertising, 2));
+        assert_eq!(Discovery::NoneAdvertising.message(&r, t), format!("no allocator advertises {r}/peer-any"));
+        assert_eq!(lp::fake::methods().iter().filter(|m| *m == "discoLookup").count(), LOOKUP_WAITS_S.len());
+        assert_eq!(lp::now_s(), lp::fake::START_S + LOOKUP_WAITS_S.iter().sum::<u64>());
+
+        scripted(1, advertising("A", t), no_extra);
+        assert_eq!(
+            lookup(&r, t),
+            (Discovery::Found(vec![Candidate { peer_id: "A".into(), addrs: vec!["/ip4/127.0.0.1/tcp/1".into()] }]), 1)
+        );
+        assert_eq!(lp::fake::calls()[1], ("connectedPeers".to_string(), json!([lp::PEER_DIRECTION_OUTBOUND])));
+
+        scripted(0, json!([]), no_extra);
+        assert_eq!(
+            discover(&format!(r#"{{"config":"{r}"}}"#)).unwrap(),
+            json!({ "serviceId": RLN_GIFTER_SERVICE_ID, "candidates": [], "joined": false, "peers": 0 })
+        );
+        lp::fake::install(Box::new(|_, m, _| Err(format!("{m}: libp2p down"))));
+        assert_eq!(
+            discover(&format!(r#"{{"config":"{r}"}}"#)).unwrap_err(),
+            "discovery unavailable: discoRegisterInterest: libp2p down"
+        );
+        lp::fake::clear();
+    }
+
+    #[test]
+    fn a_request_on_an_unjoined_node_says_so() {
+        scripted(0, json!([]), no_extra);
+        let f = super::request(&format!(r#"{{"config":"{}","identityCommitment":"{}"}}"#, registry(), canonical())).unwrap_err();
+        assert_eq!(f.error, "no allocator granted and none is configured: discovery not joined: no connected peer after 20s");
+        assert_eq!(f.json(), json!({ "error": f.error }));
+        lp::fake::clear();
+    }
+
+    fn refusing(method: &str, _: &Value) -> Option<Result<Value, String>> {
+        (method == "protocolRequest").then(|| {
+            let id = format!("gift-{}", &canonical()[..16]);
+            let resp = RlnGifterResponse { request_id: id, auth_success: false, error: Some("credential already used: x".into()), ..Default::default() };
+            Ok(json!({ "responseB64": b64(&resp.encode()) }))
+        })
+    }
+
+    fn unconfirmed(method: &str, _: &Value) -> Option<Result<Value, String>> {
+        (method == "protocolRequest").then(|| {
+            let id = format!("gift-{}", &canonical()[..16]);
+            let resp = RlnGifterResponse { request_id: id, auth_success: true,
+                failure: Some(crate::wire::MembershipAllocationFailure { error_message: "unconfirmed: not on chain".into() }), ..Default::default() };
+            Ok(json!({ "responseB64": b64(&resp.encode()) }))
+        })
+    }
+
+    fn undialable(method: &str, _: &Value) -> Option<Result<Value, String>> {
+        (method == "protocolRequest").then(|| Err("protocolRequest: dial failed".into()))
+    }
+
+    #[test]
+    fn a_failure_an_allocator_answered_names_it() {
+        let args = format!(r#"{{"config":"{}","identityCommitment":"{}"}}"#, registry(), canonical());
+
+        scripted(1, advertising("A", ""), refusing);
+        let f = super::request(&args).unwrap_err();
+        assert_eq!(f.error, "no allocator granted and none is configured: A: credential already used: x");
+        assert_eq!(f.json(), json!({ "error": f.error, "gifterPeerId": "A", "discovered": true }));
+
+        scripted(1, advertising("A", ""), unconfirmed);
+        let f = super::request(&args).unwrap_err();
+        assert_eq!(f.json(), json!({ "error": "A: unconfirmed: not on chain", "gifterPeerId": "A", "discovered": true }));
+
+        let pair = format!(r#"{{"discover":false,"gifterPeerId":"G","gifterMultiaddr":"/m","identityCommitment":"{}"}}"#, canonical());
+        scripted(1, json!([]), unconfirmed);
+        let f = super::request(&pair).unwrap_err();
+        assert_eq!(f.json(), json!({ "error": "unconfirmed: not on chain", "gifterPeerId": "G", "discovered": false }));
+
+        // Nobody read the request: no allocator to name.
+        scripted(1, advertising("A", ""), undialable);
+        let f = super::request(&args).unwrap_err();
+        assert_eq!(f.json(), json!({ "error": "no allocator granted and none is configured: A: protocolRequest: dial failed" }));
+        scripted(1, json!([]), undialable);
+        let f = super::request(&pair).unwrap_err();
+        assert_eq!(f.json(), json!({ "error": "protocolRequest: dial failed" }));
+        lp::fake::clear();
     }
 }

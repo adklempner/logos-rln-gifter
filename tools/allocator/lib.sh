@@ -226,11 +226,36 @@ except Exception:
     printf '%s' "$key"
 }
 
+# Usage: al_bootstrap_nodes_json  -> libp2p_module's bootstrapNodes array from
+# KAD_BOOTSTRAP_NODES (comma-separated multiaddrs, each ending /p2p/<peerId>);
+# [] when empty or unset. The addrs entry is the multiaddr without /p2p/<id>.
+al_bootstrap_nodes_json() {
+    local out
+    out=$(KBN="${KAD_BOOTSTRAP_NODES:-}" python3 -I -c '
+import json, os, sys
+nodes = []
+for e in os.environ["KBN"].split(","):
+    e = e.strip()
+    if not e:
+        continue
+    addr, sep, peer = e.rpartition("/p2p/")
+    if not sep or not addr or not peer:
+        print(e)
+        sys.exit(1)
+    nodes.append({"peerId": peer, "addrs": [addr]})
+print(json.dumps(nodes, separators=(",", ":")))
+') || al_die "KAD_BOOTSTRAP_NODES entry is not <multiaddr>/p2p/<peerId>: $out"
+    printf '%s' "$out"
+}
+
 # Usage: al_libp2p_up <run_dir> <listen_multiaddr> [privkey_hex]  -> echoes peerId
-# Mesh-free node: the allocator needs no gossipsub, kad or service discovery.
+# No gossipsub; kad and service discovery are mounted, bootstrapped from
+# KAD_BOOTSTRAP_NODES, so `serve` can advertise and a client can discover.
 al_libp2p_up() {
-    local run="$1" addr="$2" key="${3:-}" cfg env pinfo peer
-    cfg="{\"addrs\":[\"$addr\"],\"transport\":\"tcp\",\"mountGossipsub\":false,\"mountKad\":false,\"mountServiceDiscovery\":false"
+    local run="$1" addr="$2" key="${3:-}" cfg env pinfo peer bn
+    bn=$(al_bootstrap_nodes_json) || exit 1
+    [ "$bn" != "[]" ] || al_say "KAD_BOOTSTRAP_NODES empty: the allocator advertises to nobody"
+    cfg="{\"addrs\":[\"$addr\"],\"transport\":\"tcp\",\"mountGossipsub\":false,\"mountKad\":true,\"mountServiceDiscovery\":true,\"bootstrapNodes\":$bn"
     [ -z "$key" ] || cfg="$cfg,\"privKey\":\"$key\""
     cfg="$cfg}"
     env=$(al_call "$run" libp2p_module createNode "$cfg") || AL_LOG_ON_DIE="$run/daemon.log" al_die "libp2p createNode failed"

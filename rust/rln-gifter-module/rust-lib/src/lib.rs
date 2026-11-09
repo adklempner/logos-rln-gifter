@@ -28,16 +28,29 @@ pub trait RlnGifterModule: Send + 'static {
     /// open allocator
     /// → `{leaf_index, id_commitment, auth_success, identity_adopted,
     ///  gifterPeerId, discovered, tx_hash?, config_account?}`.
+    /// A failure is `{error, gifterPeerId?, discovered?}`: the two keys name
+    /// the last allocator tried when its own reply refused (a refusal, a
+    /// registration not submitted or unconfirmed). Discovery outcomes inside
+    /// the error text: `discovery unavailable: <why>` (this node cannot
+    /// discover: no discovery mounted, libp2p down), `discovery not joined:
+    /// no connected peer after 20s` and `no allocator advertises
+    /// <registry>/<authType>` (both may pass on a later try). With no
+    /// allocator granting and no pair configured the error is `no allocator
+    /// granted and none is configured: <what each try said>`.
     fn request(&mut self, args_json: String) -> String;
     /// Client: the allocators currently advertising a (registry, authType)
     /// pair through libp2p service discovery. Args `{config, authType?}`
-    /// → `{serviceId, candidates:[{peerId, addrs}]}` (empty when none is
-    /// placed yet; an error when this node has no discovery mounted).
+    /// → `{serviceId, candidates:[{peerId, addrs}], joined, peers}`:
+    /// candidates is empty when none is placed yet or this node joined no
+    /// peer within 20 s (`joined` false); `peers` is its outbound peer count.
+    /// A node that cannot discover is the error `discovery unavailable:
+    /// <why>`.
     fn discover(&mut self, args_json: String) -> String;
     /// Allocator: mount the gifter protocol and serve inbound requests. Args
     /// `{config, wallet, registries?, authVerifiers?, consumedNullifiersPath?,
-    ///  maxRateLimit?, advertise?}` → `{mounted:true, registries, advertised,
-    ///  serviceId?, serviceData?, advertiseError?}`.
+    ///  maxRateLimit?, advertise?, advertiseAddrs?}` → `{mounted:true,
+    ///  registries, advertised, serviceId?, serviceData?, advertisedToPeers?,
+    ///  advertisePending?, advertiseError?}`.
     /// authVerifiers maps each accepted authentication_type to its verifier
     /// module (`{"<type>": {module, config?}}` — an rln_auth_vector
     /// VERIFY_METHOD implementor; config rides along opaquely on every
@@ -46,7 +59,11 @@ pub trait RlnGifterModule: Send + 'static {
     /// the served (registry, type) pairs under the protocol id through
     /// libp2p service discovery; a node without discovery mounted serves
     /// unadvertised (advertiseError says so) unless advertise is an explicit
-    /// true, which makes that an error.
+    /// true, which makes that an error. advertiseAddrs (multiaddr strings)
+    /// advertises a record signed for those addresses instead of the listen
+    /// addresses. The advertisement is placed at once; advertisedToPeers is
+    /// the outbound peer count then, and one placed with none is re-placed
+    /// once outbound peers appear.
     fn serve(&mut self, args_json: String) -> String;
     /// Relay an arbitrary libp2p_module call so the UI can read its return value
     /// (a C++ LogosResult marshals to null through the QML bridge; a module-to-
@@ -74,7 +91,10 @@ impl RlnGifterModule for RlnGifter {
     // returnType "LogosResult", which the host marshals to null in the UI; a
     // plain String maps to QString and passes through. Errors are {"error":...}.
     fn request(&mut self, args_json: String) -> String {
-        reply(client::request(&args_json))
+        match client::request(&args_json) {
+            Ok(v) => v.to_string(),
+            Err(f) => f.json().to_string(),
+        }
     }
 
     fn discover(&mut self, args_json: String) -> String {

@@ -34,8 +34,20 @@ case "$CLIENT_MODE" in
     *) al_die "CLIENT_MODE must be probe or delivery, got '$CLIENT_MODE'" ;;
 esac
 DATA="${CLIENT_DATA:-/var/lib/allocator-client}"
-ALLOCATOR_PEER_ID="${ALLOCATOR_PEER_ID:?ALLOCATOR_PEER_ID is required (allocator.json gifter_peer_id)}"
-ALLOCATOR_MULTIADDR="${ALLOCATOR_MULTIADDR:?ALLOCATOR_MULTIADDR is required (allocator.json gifter_multiaddr)}"
+# Pinned mode names the allocator; discovery mode (no ALLOCATOR_PEER_ID) finds
+# one advertising REGISTRY_CONFIG through KAD_BOOTSTRAP_NODES.
+ALLOCATOR_PEER_ID="${ALLOCATOR_PEER_ID:-}"
+ALLOCATOR_MULTIADDR="${ALLOCATOR_MULTIADDR:-}"
+REGISTRY_CONFIG="${REGISTRY_CONFIG:-}"
+if [ -n "$ALLOCATOR_PEER_ID" ]; then
+    DISCOVER=0
+    : "${ALLOCATOR_MULTIADDR:?ALLOCATOR_MULTIADDR is required (allocator.json gifter_multiaddr)}"
+elif [ -n "$REGISTRY_CONFIG" ]; then
+    DISCOVER=1
+else
+    al_die "set ALLOCATOR_PEER_ID + ALLOCATOR_MULTIADDR (allocator.json), or REGISTRY_CONFIG to discover an allocator"
+fi
+[ "$CLIENT_MODE" != delivery ] || [ "$DISCOVER" = 0 ] || al_die "CLIENT_MODE=delivery needs ALLOCATOR_PEER_ID + ALLOCATOR_MULTIADDR"
 AUTH_TYPE="${CLIENT_AUTH_TYPE:-eth-allowlist}"
 AUTH_PROVIDER="${CLIENT_AUTH_PROVIDER:-rln_sign_module}"
 AUTH_ARGS="${CLIENT_AUTH_ARGS:-}"
@@ -179,10 +191,15 @@ esac
 # requester refuses anything else before dialling.
 # CLIENT_IDENTITY_COMMITMENT overrides it.
 IDC="${IDC_FIXED:-$(openssl rand -hex 31)0a}"
-BODY=$(IDC="$IDC" PEER="$ALLOCATOR_PEER_ID" MADDR="$ALLOCATOR_MULTIADDR" AT="$AUTH_TYPE" PROV="$AUTH_PROVIDER" ARGS="$AUTH_ARGS" PAY="$AUTH_PAYLOAD" RATE="$RATE" python3 -I -c '
+BODY=$(IDC="$IDC" PEER="$ALLOCATOR_PEER_ID" MADDR="$ALLOCATOR_MULTIADDR" DISC="$DISCOVER" CFG="$REGISTRY_CONFIG" AT="$AUTH_TYPE" PROV="$AUTH_PROVIDER" ARGS="$AUTH_ARGS" PAY="$AUTH_PAYLOAD" RATE="$RATE" python3 -I -c '
 import json, os
-o = {"gifterPeerId": os.environ["PEER"], "gifterMultiaddr": os.environ["MADDR"],
-     "identityCommitment": os.environ["IDC"], "rate": int(os.environ["RATE"])}
+o = {"identityCommitment": os.environ["IDC"], "rate": int(os.environ["RATE"])}
+if os.environ["DISC"] == "1":
+    o["config"] = os.environ["CFG"]
+    o["discover"] = True
+else:
+    o["gifterPeerId"] = os.environ["PEER"]
+    o["gifterMultiaddr"] = os.environ["MADDR"]
 if os.environ["AT"] != "none":
     o["authType"] = os.environ["AT"]
     if os.environ["PAY"]:
@@ -193,7 +210,8 @@ if os.environ["AT"] != "none":
         o["authArgs"] = json.loads(os.environ["ARGS"])
 print(json.dumps(o, separators=(",", ":")))
 ') || al_die "request body could not be built (CLIENT_AUTH_ARGS not JSON?)"
-al_say "request -> $ALLOCATOR_PEER_ID @ $ALLOCATOR_MULTIADDR ($AUTH_TYPE via ${AUTH_PROVIDER:-raw authPayload}, commitment $IDC)"
+if [ "$DISCOVER" = 1 ]; then TARGET="a discovered allocator for registry $REGISTRY_CONFIG"; else TARGET="$ALLOCATOR_PEER_ID @ $ALLOCATOR_MULTIADDR"; fi
+al_say "request -> $TARGET ($AUTH_TYPE via ${AUTH_PROVIDER:-raw authPayload}, commitment $IDC)"
 send_request() { # sets RES and ELAPSED
     local t0 t1 env_out
     t0=$(date +%s)

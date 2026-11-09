@@ -37,6 +37,11 @@
 #   A12 lez-allowlist: rln_sign_module's own lez key; unlisted rejected
 #      by name, listed (base58 form, then the hex form) accepted and reaches
 #      register_member
+#   A13 discovery: with a bootstrap list, `serve` advertises ("advertised":true);
+#      a second libp2p node bootstrapped to the allocator finds it with
+#      `discover {config}` (peer id among the candidates, listen addr in addrs),
+#      and a `request` naming no allocator is routed to it ("discovered":true;
+#      the stub registry refusing the registration is fine)
 # From A9 on every serve names rln_auth_module for each allowlist type
 # it carries (eth stays listed through A11/A12, logos through A12), so one
 # verifier instance routes all three by auth_type.
@@ -130,7 +135,8 @@ teardown() {
     if [ "${KEEP:-0}" = 1 ]; then al_say "KEEP=1: daemons left up ($WORK)"; return; fi
     "$HERE/run-allocator.sh" down >/dev/null 2>&1 || true
     al_daemon_stop "$CLIENT" || true
-    rm -rf "$CLIENT/modules"
+    al_daemon_stop "${CLIENT2:-$WORK/client2}" || true
+    rm -rf "$CLIENT/modules" "${CLIENT2:-$WORK/client2}/modules"
 }
 trap teardown EXIT
 
@@ -331,6 +337,38 @@ if [ "$ok" = 1 ]; then
     ok=0; contains "$R" "register_member" && [ "$((N1 - N0))" = 1 ] && ok=1
     check "$ok" A12d "listed by hex: accepted, registry called once ($N0->$N1): ${R:-<no reply>}"
 fi
+
+# ---------------------------------------------------------------- A13 discovery
+al_say "==== A13 service discovery: the allocator advertises, a second node bootstrapped to it discovers it"
+A13_CFG=1313131313131313131313131313131313131313131313131313131313131313
+CLIENT2="$WORK/client2"
+mkdir -p "$CLIENT2/modules"
+al_install_lgx "$LIBP2P_LGX" "$CLIENT2/modules"
+al_install_lgx "$GIFTER_LGX" "$CLIENT2/modules"
+al_daemon_start "$CLIENT2"
+al_load "$CLIENT2" libp2p_module
+al_load "$CLIENT2" rln_gifter_module
+# An open allocator on a canonical registry account; the advertisement is
+# asked for by naming a bootstrap list (here: nothing but the allocator itself).
+unset AUTH_VERIFIERS
+REGISTRY_CONFIG="$A13_CFG" KAD_BOOTSTRAP_NODES="$GADDR/p2p/$PEER2" \
+    "$HERE/run-allocator.sh" serve > "$WORK/serve-advertise.json" 2> "$WORK/serve-advertise.log" \
+    || { cat "$WORK/serve-advertise.log" >&2; al_die "serve refresh (advertise) failed"; }
+check "$(grep -q '"advertised":true' "$WORK/serve-advertise.log" && echo 1 || echo 0)" A13a "serve advertised: $(grep -a 'serve:' "$WORK/serve-advertise.log" | tail -1)"
+C2PEER=$(KAD_BOOTSTRAP_NODES="$GADDR/p2p/$PEER2" al_libp2p_up "$CLIENT2" "/ip4/127.0.0.1/tcp/0")
+al_say "client2 peer $C2PEER (bootstrapped to $PEER2)"
+# The record travels over the DHT: poll, the first lookups can precede its arrival.
+D=""; ok=0
+for _ in 1 2 3 4 5 6; do
+    D=$(al_call "$CLIENT2" rln_gifter_module discover "{\"config\":\"$A13_CFG\"}" | al_res) || D=""
+    if contains "$D" "$PEER2" && contains "$D" "$GADDR"; then ok=1; break; fi
+    sleep 5
+done
+check "$ok" A13b "discover names the allocator $PEER2 with its listen addr $GADDR: ${D:-<no reply>}"
+IDC=$(rand_commitment)
+R=$(al_request "$CLIENT2" "{\"config\":\"$A13_CFG\",\"identityCommitment\":\"$IDC\",\"rate\":100,\"discover\":true}" a13) || R=""
+ok=0; contains "$R" '"discovered":true' && ok=1
+check "$ok" A13c "request without a pair reached the allocator by discovery: ${R:-<no reply>}"
 
 # ---------------------------------------------------------------- summary
 RES="$RESULTS" FAILS="$FAILS" P1="$PEER1" P2="$PEER2" GADDR="$GADDR" ADDR="$ALLOW_ADDR" \

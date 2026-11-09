@@ -327,7 +327,8 @@ serve_json() {
     CFG="$REGISTRY_CONFIG" NUL="$NULLIFIERS" MAXR="$MAX_RATE_LIMIT" NODE="$POW_NODE_URL" AUD="$POW_AUDIENCE" \
     AUDIT="$DATA/pow-claim-audit.jsonl" ALLOW="$(read_allowlist)" CAS="$KEYCARD_CAS_JSON" \
     LOGOS_ON="$LOGOS_ALLOWLIST" LOGOS_KEYS="$(read_allowlist_logos)" LOGOS_AUD="$LOGOS_AUDIENCE" \
-    LEZ_ON="$LEZ_ALLOWLIST" LEZ_IDS="$(read_allowlist_lez)" LEZ_AUD="$LEZ_AUDIENCE" python3 -I -c '
+    LEZ_ON="$LEZ_ALLOWLIST" LEZ_IDS="$(read_allowlist_lez)" LEZ_AUD="$LEZ_AUDIENCE" \
+    ADV="$ADVERTISE_ADDR" ALT="$ALT_MULTIADDRS" BOOT="${KAD_BOOTSTRAP_NODES:-}" python3 -I -c '
 import json, os
 av = {"eth-allowlist": {"module": "rln_auth_module",
                         "config": {"allowlist": json.loads(os.environ["ALLOW"])}}}
@@ -350,6 +351,9 @@ if cas:
                                  "config": {"trusted_cas": cas}}
 o ={"config": os.environ["CFG"], "wallet": "", "authVerifiers": av,
      "consumedNullifiersPath": os.environ["NUL"], "maxRateLimit": int(os.environ["MAXR"])}
+o["advertiseAddrs"] = [os.environ["ADV"]] + [a.strip() for a in os.environ["ALT"].split(",") if a.strip()]
+if os.environ["BOOT"].strip():
+    o["advertise"] = True
 print(json.dumps(o, separators=(",", ":")))
 '
 }
