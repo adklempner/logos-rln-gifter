@@ -28,7 +28,10 @@ pub trait RlnAuthModule: Send + 'static {
 }
 
 #[cfg(not(test))]
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/generated/provider_gen.rs"));
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/generated/provider_gen.rs"
+));
 
 // The unit tests never cross the C ABI; they only need the context shape.
 #[cfg(test)]
@@ -100,16 +103,33 @@ mod tests {
             .claimant(AllowlistClaimant);
         let req = json!({ "auth_type": auth_type, "id_commitment_hex": IDC });
         let out: Value = serde_json::from_str(&dispatch_produce(&req.to_string(), &r)).unwrap();
-        out["payload_hex"].as_str().unwrap_or_else(|| panic!("{out}")).to_string()
+        out["payload_hex"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{out}"))
+            .to_string()
     }
 
     #[test]
     fn supported_auth_types_are_the_twelve_compositions() {
-        let list: Vec<String> = serde_json::from_str(&RlnAuth::default().supported_auth_types()).unwrap();
-        assert_eq!(list, [
-            "eth-allowlist", "eth-any", "lez-allowlist", "lez-any", "logos-allowlist", "logos-any", "logos-pow-claim",
-            "keycard-allowlist", "keycard-any", "keycard-attestation", "peer-allowlist", "peer-any",
-        ]);
+        let list: Vec<String> =
+            serde_json::from_str(&RlnAuth::default().supported_auth_types()).unwrap();
+        assert_eq!(
+            list,
+            [
+                "eth-allowlist",
+                "eth-any",
+                "lez-allowlist",
+                "lez-any",
+                "logos-allowlist",
+                "logos-any",
+                "logos-pow-claim",
+                "keycard-allowlist",
+                "keycard-any",
+                "keycard-attestation",
+                "peer-allowlist",
+                "peer-any",
+            ]
+        );
     }
 
     #[test]
@@ -120,11 +140,20 @@ mod tests {
             "id_commitment_hex": IDC, "rate": 100, "config": {}, "peer_id": peer,
         }));
         assert_eq!(out["ok"], true, "{out}");
-        assert_eq!(out["nullifier"], rln_auth_vectors::scheme::peer::parse_peer_id(peer).unwrap());
+        assert_eq!(
+            out["nullifier"],
+            rln_auth_vectors::scheme::peer::parse_peer_id(peer).unwrap()
+        );
         let out = call(json!({
             "auth_type": "peer-any", "payload_hex": "026400000000000000", "id_commitment_hex": IDC, "rate": 100,
         }));
-        assert!(out["error"].as_str().unwrap().contains("transport peer id unavailable"), "{out}");
+        assert!(
+            out["error"]
+                .as_str()
+                .unwrap()
+                .contains("transport peer id unavailable"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -133,10 +162,26 @@ mod tests {
         let mut one = [0u8; 32];
         one[0] = 1;
         let cases = [
-            ("eth-allowlist", json!({ "allowlist": ["0x0000000000000000000000000000000000000001"] }), "eth part"),
-            ("lez-allowlist", json!({ "allowlist": ["33".repeat(32)] }), "lez part"),
-            ("logos-allowlist", json!({ "allowlist": [hex::encode(one)] }), "logos part"),
-            ("keycard-allowlist", json!({ "allowlist": [format!("02{}", "11".repeat(32))] }), "attestation parse failed"),
+            (
+                "eth-allowlist",
+                json!({ "allowlist": ["0x0000000000000000000000000000000000000001"] }),
+                "eth part",
+            ),
+            (
+                "lez-allowlist",
+                json!({ "allowlist": ["33".repeat(32)] }),
+                "lez part",
+            ),
+            (
+                "logos-allowlist",
+                json!({ "allowlist": [hex::encode(one)] }),
+                "logos part",
+            ),
+            (
+                "keycard-allowlist",
+                json!({ "allowlist": [format!("02{}", "11".repeat(32))] }),
+                "attestation parse failed",
+            ),
         ];
         for (auth_type, config, needle) in cases {
             // A framed payload whose body is 10 garbage bytes.
@@ -148,7 +193,9 @@ mod tests {
                 "id_commitment_hex": IDC, "rate": 100, "config": config,
             }));
             assert_eq!(out["ok"], false, "{auth_type}: {out}");
-            let reason = out["reason"].as_str().unwrap_or_else(|| panic!("{auth_type}: {out}"));
+            let reason = out["reason"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{auth_type}: {out}"));
             assert!(reason.contains(needle), "{auth_type}: {reason}");
         }
     }
@@ -172,10 +219,23 @@ mod tests {
 
     #[test]
     fn unknown_and_refused_compositions_use_the_error_envelope() {
-        let out = call(json!({ "auth_type": "nope-allowlist", "payload_hex": "00", "id_commitment_hex": IDC, "rate": 100 }));
+        let out = call(
+            json!({ "auth_type": "nope-allowlist", "payload_hex": "00", "id_commitment_hex": IDC, "rate": 100 }),
+        );
         assert!(out.get("ok").is_none(), "{out}");
-        assert!(out["error"].as_str().unwrap().contains("unknown auth_type"), "{out}");
-        let out = call(json!({ "auth_type": "eth-attestation", "payload_hex": "00", "id_commitment_hex": IDC, "rate": 100 }));
-        assert!(out["error"].as_str().unwrap().contains("does not accept the eth scheme"), "{out}");
+        assert!(
+            out["error"].as_str().unwrap().contains("unknown auth_type"),
+            "{out}"
+        );
+        let out = call(
+            json!({ "auth_type": "eth-attestation", "payload_hex": "00", "id_commitment_hex": IDC, "rate": 100 }),
+        );
+        assert!(
+            out["error"]
+                .as_str()
+                .unwrap()
+                .contains("does not accept the eth scheme"),
+            "{out}"
+        );
     }
 }
