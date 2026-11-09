@@ -442,7 +442,7 @@ impl RlnSign {
     }
 }
 
-fn error_json(e: String) -> String {
+fn error_json(e: &str) -> String {
     json!({ "error": e }).to_string()
 }
 
@@ -453,10 +453,12 @@ impl RlnSignModule for RlnSign {
         dispatch_produce(&args_json, &self.registry)
     }
     fn identity(&mut self, req_json: String) -> String {
-        self.identity_impl(&req_json).unwrap_or_else(error_json)
+        self.identity_impl(&req_json)
+            .unwrap_or_else(|e| error_json(&e))
     }
     fn import_key(&mut self, req_json: String) -> String {
-        self.import_impl(&req_json).unwrap_or_else(error_json)
+        self.import_impl(&req_json)
+            .unwrap_or_else(|e| error_json(&e))
     }
     fn on_context_ready(&mut self, ctx: &RustModuleContext) {
         *self
@@ -534,12 +536,12 @@ mod tests {
         v.to_string()
     }
 
-    fn parse(s: String) -> Value {
-        serde_json::from_str(&s).unwrap_or_else(|e| panic!("{e}: {s}"))
+    fn parse(s: &str) -> Value {
+        serde_json::from_str(s).unwrap_or_else(|e| panic!("{e}: {s}"))
     }
 
     fn identity(m: &mut RlnSign, scheme: &str) -> Value {
-        parse(m.identity(json!({ "scheme": scheme }).to_string()))
+        parse(&m.identity(json!({ "scheme": scheme }).to_string()))
     }
 
     fn import(m: &mut RlnSign, scheme: &str, pk: &str) -> String {
@@ -560,7 +562,7 @@ mod tests {
     }
 
     /// The verify side, with `id` allowlisted: the nullifier is the identity.
-    fn verified(auth_type: &str, payload_hex: &str, id: &str, args: Value) -> Value {
+    fn verified(auth_type: &str, payload_hex: &str, id: &str, args: &Value) -> Value {
         let r = VerifyRegistry::new()
             .scheme(Eth)
             .scheme(Lez)
@@ -572,7 +574,7 @@ mod tests {
         serde_json::from_str(&dispatch_verify(&req.to_string(), &r)).unwrap()
     }
 
-    fn payload_of(reply: String) -> String {
+    fn payload_of(reply: &str) -> String {
         let v = parse(reply);
         v["payload_hex"]
             .as_str()
@@ -587,13 +589,13 @@ mod tests {
         let mut m = RlnSign::default();
         let id = identity(&mut m, "eth");
         assert_eq!(id["persisted"], false);
-        let payload = payload_of(m.produce_auth(produce_req("eth-allowlist", IDC, None)));
+        let payload = payload_of(&m.produce_auth(produce_req("eth-allowlist", IDC, None)));
         assert_eq!(payload.len(), (1 + 65 + 8) * 2);
         let v = verified(
             "eth-allowlist",
             &payload,
             id["id"].as_str().unwrap(),
-            json!({}),
+            &json!({}),
         );
         assert_eq!(v["ok"], true, "{v}");
         assert_eq!(v["nullifier"], id["id"]);
@@ -603,12 +605,12 @@ mod tests {
     fn eth_private_key_override_is_honoured() {
         let mut m = RlnSign::default();
         let module_addr = identity(&mut m, "eth");
-        let payload = payload_of(m.produce_auth(produce_req(
+        let payload = payload_of(&m.produce_auth(produce_req(
             "eth-allowlist",
             IDC,
             Some(json!({ "private_key": PK42 })),
         )));
-        let v = verified("eth-allowlist", &payload, ADDR42, json!({}));
+        let v = verified("eth-allowlist", &payload, ADDR42, &json!({}));
         assert_eq!(v["ok"], true, "{v}");
         assert_ne!(module_addr["id"], ADDR42);
     }
@@ -658,7 +660,7 @@ mod tests {
         let again = identity(&mut b, "eth");
         assert_eq!(again["id"], first["id"], "same path, same key");
 
-        let refused = parse(import(&mut b, "eth", PK42));
+        let refused = parse(&import(&mut b, "eth", PK42));
         assert_eq!(
             refused["error"],
             "a different eth key is already persisted; pass force:true to replace it"
@@ -668,10 +670,10 @@ mod tests {
             first["id"],
             "refused import changes nothing"
         );
-        let imported = parse(import_force(&mut b, "eth", PK42));
+        let imported = parse(&import_force(&mut b, "eth", PK42));
         assert_eq!(imported["id"], ADDR42);
         assert_eq!(
-            parse(import(&mut b, "eth", PK42))["id"],
+            parse(&import(&mut b, "eth", PK42))["id"],
             ADDR42,
             "same key needs no force"
         );
@@ -688,13 +690,13 @@ mod tests {
         let mut m = RlnSign::default();
         let id = identity(&mut m, "lez");
         assert_eq!(id["persisted"], false);
-        let payload = payload_of(m.produce_auth(produce_req("lez-allowlist", IDC, None)));
+        let payload = payload_of(&m.produce_auth(produce_req("lez-allowlist", IDC, None)));
         assert_eq!(payload.len(), (1 + 96 + 8) * 2);
         let v = verified(
             "lez-allowlist",
             &payload,
             id["id"].as_str().unwrap(),
-            json!({}),
+            &json!({}),
         );
         assert_eq!(v["ok"], true, "{v}");
         assert_eq!(v["nullifier"], id["id"]);
@@ -704,12 +706,12 @@ mod tests {
     fn lez_private_key_override_is_honoured() {
         let mut m = RlnSign::default();
         let module_id = identity(&mut m, "lez");
-        let payload = payload_of(m.produce_auth(produce_req(
+        let payload = payload_of(&m.produce_auth(produce_req(
             "lez-allowlist",
             IDC,
             Some(json!({ "private_key": SK3 })),
         )));
-        let v = verified("lez-allowlist", &payload, ACCT3_HEX, json!({}));
+        let v = verified("lez-allowlist", &payload, ACCT3_HEX, &json!({}));
         assert_eq!(v["ok"], true, "{v}");
         assert_ne!(module_id["id"], ACCT3_HEX);
     }
@@ -748,7 +750,7 @@ mod tests {
             "same path, same key"
         );
         assert!(import(&mut b, "lez", SK3).contains("pass force:true"));
-        let imported = parse(import_force(&mut b, "lez", SK3));
+        let imported = parse(&import_force(&mut b, "lez", SK3));
         assert_eq!(imported["id"], ACCT3_HEX);
         let mut c = with_ctx(&dir);
         let after = identity(&mut c, "lez");
@@ -784,7 +786,7 @@ mod tests {
         );
         assert!(eth.get("id_base58").is_none() && eth.get("source").is_none());
 
-        let lez = parse(m.identity(json!({ "auth_type": "lez-allowlist" }).to_string()));
+        let lez = parse(&m.identity(json!({ "auth_type": "lez-allowlist" }).to_string()));
         assert_eq!(lez["scheme"], "lez");
         assert_eq!(lez["auth_type"], "lez-allowlist");
         let hex_id = lez["id"].as_str().unwrap();
@@ -799,7 +801,7 @@ mod tests {
             json!({ "scheme": "logos", "id": K, "source": "pow_status", "persisted": true })
         );
         let logos = parse(
-            m.identity(json!({ "scheme": "logos", "args": { "public_key": K2 } }).to_string()),
+            &m.identity(json!({ "scheme": "logos", "args": { "public_key": K2 } }).to_string()),
         );
         assert_eq!(logos["id"], K2);
         assert_eq!(logos["source"], "args");
@@ -813,20 +815,20 @@ mod tests {
     fn produce_routes_per_auth_type() {
         let node = FakeNode::new(vec![K]);
         let mut m = RlnSign::with_node(Some(node.clone()));
-        let eth = payload_of(m.produce_auth(produce_req("eth-allowlist", IDC, None)));
+        let eth = payload_of(&m.produce_auth(produce_req("eth-allowlist", IDC, None)));
         assert_eq!(eth.len(), (1 + 65 + 8) * 2);
-        let lez = payload_of(m.produce_auth(produce_req("lez-allowlist", IDC, None)));
+        let lez = payload_of(&m.produce_auth(produce_req("lez-allowlist", IDC, None)));
         assert_eq!(lez.len(), (1 + 96 + 8) * 2);
         assert_eq!(
             *node.signed.lock().unwrap(),
             0,
             "eth/lez must not touch the node"
         );
-        let logos = payload_of(m.produce_auth(produce_req("logos-allowlist", IDC, None)));
+        let logos = payload_of(&m.produce_auth(produce_req("logos-allowlist", IDC, None)));
         assert_eq!(logos.len(), (1 + 160 + 8) * 2);
         assert_eq!(&logos[2..66], K);
         assert_eq!(*node.signed.lock().unwrap(), 1);
-        let v = verified("logos-allowlist", &logos, K, json!({}));
+        let v = verified("logos-allowlist", &logos, K, &json!({}));
         assert!(
             v["reason"]
                 .as_str()
@@ -839,7 +841,7 @@ mod tests {
     #[test]
     fn import_refuses_logos_and_unknown_schemes() {
         let mut m = RlnSign::default();
-        let e = parse(import(&mut m, "logos", PK42));
+        let e = parse(&import(&mut m, "logos", PK42));
         assert_eq!(e, json!({ "error": LOGOS_IMPORT_REFUSAL }));
         assert!(import(&mut m, "keycard", PK42).contains("unknown scheme"));
         assert!(m
@@ -858,7 +860,7 @@ mod tests {
         let lez_file = std::path::Path::new(&dir).join(LEZ_KEY_FILE);
         let lez_bytes = std::fs::read_to_string(&lez_file).unwrap();
 
-        let imported = parse(import(&mut a, "eth", PK42));
+        let imported = parse(&import(&mut a, "eth", PK42));
         assert_eq!(
             imported,
             json!({ "scheme": "eth", "id": ADDR42, "persisted": true })
@@ -871,7 +873,7 @@ mod tests {
         assert_eq!(identity(&mut b, "eth")["id"], ADDR42);
 
         // And the other way round: a lez import leaves the eth key alone.
-        let lez = parse(import_force(&mut b, "lez", SK3));
+        let lez = parse(&import_force(&mut b, "lez", SK3));
         assert_eq!(lez["id"], ACCT3_HEX);
         assert_eq!(lez["id_base58"], ACCT3_B58);
         assert_eq!(identity(&mut b, "eth")["id"], ADDR42);
@@ -894,7 +896,7 @@ mod tests {
 
         let mut m = with_ctx(&dir);
         assert_eq!(
-            parse(import(&mut m, "eth", PK42))["id"],
+            parse(&import(&mut m, "eth", PK42))["id"],
             ADDR42,
             "same key, no force needed"
         );
@@ -932,7 +934,7 @@ mod tests {
         std::fs::write(std::path::Path::new(&dir).join(LEZ_KEY_FILE), "not hex\n").unwrap();
         let mut m = with_ctx(&dir);
         assert!(import(&mut m, "lez", SK3).contains("pass force:true"));
-        assert_eq!(parse(import_force(&mut m, "lez", SK3))["id"], ACCT3_HEX);
+        assert_eq!(parse(&import_force(&mut m, "lez", SK3))["id"], ACCT3_HEX);
         assert!(m
             .import_key(json!({ "scheme": "lez", "private_key": SK3, "force": "yes" }).to_string())
             .contains("force must be a boolean"));
@@ -943,9 +945,9 @@ mod tests {
     fn stringified_args_private_key_is_honoured() {
         let mut m = RlnSign::default();
         let args = Value::String(json!({ "private_key": PK42 }).to_string());
-        let payload = payload_of(m.produce_auth(produce_req("eth-allowlist", IDC, Some(args))));
+        let payload = payload_of(&m.produce_auth(produce_req("eth-allowlist", IDC, Some(args))));
         assert_eq!(
-            verified("eth-allowlist", &payload, ADDR42, json!({}))["ok"],
+            verified("eth-allowlist", &payload, ADDR42, &json!({}))["ok"],
             true
         );
         assert!(
@@ -954,7 +956,7 @@ mod tests {
         );
 
         let args = Value::String(json!({ "private_key": SK3, "rate_max": 5 }).to_string());
-        let payload = payload_of(m.produce_auth(produce_req("lez-allowlist", IDC, Some(args))));
+        let payload = payload_of(&m.produce_auth(produce_req("lez-allowlist", IDC, Some(args))));
         assert_eq!(
             &payload[payload.len() - 16..],
             hex::encode(5u64.to_le_bytes())
@@ -964,7 +966,7 @@ mod tests {
                 "lez-allowlist",
                 &payload,
                 ACCT3_HEX,
-                json!({ "rate_max": 5 })
+                &json!({ "rate_max": 5 })
             )["ok"],
             true
         );
