@@ -204,7 +204,7 @@ fn persisted_key(persistence_path: &str, kind: Kind) -> Option<Result<[u8; 32], 
 /// per kind. Shared by the module and its signers.
 #[derive(Default)]
 struct KeyStore {
-    persistence_path: std::sync::Mutex<String>,
+    persistence_path: std::sync::OnceLock<String>,
     eth: std::sync::Mutex<Option<[u8; 32]>>,
     lez: std::sync::Mutex<Option<[u8; 32]>>,
 }
@@ -216,14 +216,11 @@ impl KeyStore {
             Kind::Lez => &self.lez,
         }
     }
-    fn path(&self) -> String {
-        self.persistence_path
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
+    fn path(&self) -> &str {
+        self.persistence_path.get().map_or("", String::as_str)
     }
     fn persisted(&self, kind: Kind) -> bool {
-        key_path_in(&self.path(), kind.file())
+        key_path_in(self.path(), kind.file())
             .map(|p| p.exists())
             .unwrap_or(false)
     }
@@ -240,11 +237,11 @@ impl KeyStore {
             return Ok(k);
         }
         let path = self.path();
-        let key = match persisted_key(&path, kind) {
+        let key = match persisted_key(path, kind) {
             Some(r) => r.map_err(|e| format!("{}: {e}", kind.file()))?,
             None => {
                 let k = kind.random();
-                persist_key(&path, kind, &k)?;
+                persist_key(path, kind, &k)?;
                 if path.is_empty() {
                     eprintln!(
                         "rln_sign_module: no persistence path — the {} signing key is in-memory and changes per run",
@@ -262,7 +259,7 @@ impl KeyStore {
     /// `force` is false; the cache follows.
     fn import(&self, kind: Kind, key: [u8; 32], force: bool) -> Result<(), String> {
         let path = self.path();
-        let differs = match persisted_key(&path, kind) {
+        let differs = match persisted_key(path, kind) {
             None => false,
             Some(Ok(old)) => old != key,
             Some(Err(_)) => true,
@@ -273,7 +270,7 @@ impl KeyStore {
                 kind.scheme()
             ));
         }
-        persist_key(&path, kind, &key)?;
+        persist_key(path, kind, &key)?;
         *self.slot(kind).lock().unwrap_or_else(|p| p.into_inner()) = Some(key);
         Ok(())
     }
@@ -462,11 +459,12 @@ impl RlnSignModule for RlnSign {
             .unwrap_or_else(|e| error_json(&e))
     }
     fn on_context_ready(&mut self, ctx: &RustModuleContext) {
-        *self
+        // The generated host fires this hook at most once per process, so the path is written once.
+        // OWNERSHIP: `ctx` is borrowed from the host; the store keeps its own copy of the path.
+        let _ = self
             .store
             .persistence_path
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = ctx.instance_persistence_path.clone();
+            .set(ctx.instance_persistence_path.clone());
         *self.store.eth.lock().unwrap_or_else(|p| p.into_inner()) = None;
         *self.store.lez.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
