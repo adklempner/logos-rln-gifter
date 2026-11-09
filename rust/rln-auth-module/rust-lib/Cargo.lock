@@ -953,7 +953,7 @@ dependencies = [
 [[package]]
 name = "keycard_attest"
 version = "0.2.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.1#4a2aa3ed4096b162b5fc8d8471ccc8e1d994dcac"
 dependencies = [
  "k256",
  "sha2",
@@ -1231,7 +1231,7 @@ dependencies = [
 [[package]]
 name = "pow-claim"
 version = "0.2.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.1#4a2aa3ed4096b162b5fc8d8471ccc8e1d994dcac"
 dependencies = [
  "ark-ff",
  "blake2",
@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "rln_auth_module"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "hex",
  "logos-rust-sdk",
@@ -1364,8 +1364,8 @@ dependencies = [
 
 [[package]]
 name = "rln_auth_vector"
-version = "0.3.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
+version = "0.3.1"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.1#4a2aa3ed4096b162b5fc8d8471ccc8e1d994dcac"
 dependencies = [
  "hex",
  "serde",
@@ -1376,7 +1376,7 @@ dependencies = [
 [[package]]
 name = "rln_auth_vectors"
 version = "0.2.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.1#4a2aa3ed4096b162b5fc8d8471ccc8e1d994dcac"
 dependencies = [
  "base58",
  "hex",
@@ -1945,7 +1945,7 @@ dependencies = [
 [[package]]
 name = "zksign_light"
 version = "0.2.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.1#4a2aa3ed4096b162b5fc8d8471ccc8e1d994dcac"
 dependencies = [
  "ark-ff",
  "hex",

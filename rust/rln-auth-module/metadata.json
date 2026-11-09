@@ -1,6 +1,6 @@
 {
   "name": "rln_auth_module",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "The RLN gifter's verifier (rln_auth_vector verify_auth): every scheme × authoriser composition — eth/lez/logos/keycard-allowlist, keycard-attestation, logos-pow-claim",
   "author": "Logos",
   "type": "core",

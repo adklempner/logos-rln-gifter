@@ -88,7 +88,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "logos-rust-sdk"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -120,8 +120,8 @@ dependencies = [
 
 [[package]]
 name = "rln_auth_vector"
-version = "0.3.0"
-source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.0#d7e781178a3c192d02aa86a0dbac541c3ff2a436"
+version = "0.3.1"
+source = "git+https://github.com/logos-co/logos-rln-gifter?tag=auth-crates-v0.3.1#4a2aa3ed4096b162b5fc8d8471ccc8e1d994dcac"
 dependencies = [
  "hex",
  "serde",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "rln_gifter_module"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "base58",
  "base64",

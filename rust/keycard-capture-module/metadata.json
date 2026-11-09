@@ -1,6 +1,6 @@
 {
   "name": "keycard_capture_module",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "The keycard scheme's producer for gifted RLN registration (rln_auth_vector produce_auth; client-side PC/SC): keycard-allowlist and keycard-attestation",
   "author": "Logos",
   "type": "core",
