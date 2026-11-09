@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use rln_auth_vector::VerifyRequestRef;
 use serde_json::{json, Value};
@@ -53,12 +53,11 @@ const AUTH_VERIFY_TIMEOUT_MS: i32 = 30_000;
 const DEFAULT_MAX_RATE: u64 = 100;
 const MAX_RPC_SIZE: u64 = 4096;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct RegistryCfg {
     max_rate_limit: u64,
 }
 
-#[derive(Clone)]
 struct ServerCfg {
     /// The registry a request naming none is served on.
     default_config: String,
@@ -152,7 +151,10 @@ fn parse_registries(
     Ok((map, order))
 }
 
-static SERVER: Mutex<Option<ServerCfg>> = Mutex::new(None);
+/// The configuration of the latest `serve`.
+// OWNERSHIP: `serve` swaps in a whole new config; each request takes a cheap
+// Arc handle and keeps the config it started with while the lock is free.
+static SERVER: Mutex<Option<Arc<ServerCfg>>> = Mutex::new(None);
 // OWNERSHIP: one store for the process, shared by `serve` on the owner thread
 // (merge, file change) and the worker (reserve, release); its methods do file
 // IO only, so a wait on this lock never stalls the owner thread's event loop.
@@ -442,12 +444,12 @@ pub fn serve(state: &mut ServeState, args_json: &str) -> Result<Value, String> {
     lock(&NULLIFIERS)
         .open(nullifiers_path)
         .map_err(|e| format!("nullifier store: {e}"))?;
-    *lock(&SERVER) = Some(ServerCfg {
+    *lock(&SERVER) = Some(Arc::new(ServerCfg {
         default_config,
         registries,
         wallet,
         auth_verifiers,
-    });
+    }));
 
     let mut reply = json!({ "mounted": true, "registries": served, "advertised": false });
     if let Some(data) = &data {
@@ -636,7 +638,8 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
         );
     }
 
-    let Some(cfg) = lock(&SERVER).clone() else {
+    // OWNERSHIP: cheap Arc handle; a request keeps the config it started with.
+    let Some(cfg) = lock(&SERVER).as_ref().map(Arc::clone) else {
         return failure_response(
             req.request_id,
             true,
@@ -993,14 +996,14 @@ mod tests {
         super::serve(&mut ServeState::default(), args_json)
     }
 
-    fn served(a: &Value) -> ServerCfg {
+    fn served(a: &Value) -> Arc<ServerCfg> {
         let (registries, served) = parse_registries(a, &acct(0xd).to_uppercase(), 100).unwrap();
-        ServerCfg {
+        Arc::new(ServerCfg {
             default_config: served[0].clone(),
             registries,
             wallet: String::new(),
             auth_verifiers: HashMap::new(),
-        }
+        })
     }
 
     #[test]
