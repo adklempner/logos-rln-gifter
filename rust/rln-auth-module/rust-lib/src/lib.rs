@@ -107,7 +107,7 @@ mod tests {
     const ADDR42: &str = "0x17c5185167401ed00cf5f5b2fc97d9bbfdb7d025";
     const PK0_ACCT_HEX: &str = "ec2cbcd4488075c4b30678c30351327fdf99f3fe703edc2999b68f8fd12bdbc8";
 
-    fn call(req: Value) -> Value {
+    fn call(req: &Value) -> Value {
         serde_json::from_str(&RlnAuth::default().verify_auth(req.to_string())).unwrap()
     }
 
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn peer_any_accepts_the_transport_peer_through_the_module() {
         let peer = "16Uiu2HAkyiMKmjcAj4FS5jot1jMZB73mnY3wJnSTKZmTBhrFJEaT";
-        let out = call(json!({
+        let out = call(&json!({
             "auth_type": "peer-any", "payload_hex": "026400000000000000",
             "id_commitment_hex": IDC, "rate": 100, "config": {}, "peer_id": peer,
         }));
@@ -161,7 +161,7 @@ mod tests {
             out["nullifier"],
             rln_auth_vectors::scheme::peer::parse_peer_id(peer).unwrap()
         );
-        let out = call(json!({
+        let out = call(&json!({
             "auth_type": "peer-any", "payload_hex": "026400000000000000", "id_commitment_hex": IDC, "rate": 100,
         }));
         assert!(
@@ -205,7 +205,7 @@ mod tests {
             let mut body = vec![2u8];
             body.extend_from_slice(&[0xaa; 10]);
             body.extend_from_slice(&100u64.to_le_bytes());
-            let out = call(json!({
+            let out = call(&json!({
                 "auth_type": auth_type, "payload_hex": hex::encode(&body),
                 "id_commitment_hex": IDC, "rate": 100, "config": config,
             }));
@@ -219,14 +219,14 @@ mod tests {
 
     #[test]
     fn eth_and_lez_accept_through_the_module() {
-        let out = call(json!({
+        let out = call(&json!({
             "auth_type": "eth-allowlist", "payload_hex": produced("eth-allowlist"),
             "id_commitment_hex": IDC, "rate": 100, "config": { "allowlist": [ADDR42] },
         }));
         assert_eq!(out["ok"], true, "{out}");
         assert_eq!(out["nullifier"], ADDR42);
 
-        let out = call(json!({
+        let out = call(&json!({
             "auth_type": "lez-allowlist", "payload_hex": produced("lez-allowlist"),
             "id_commitment_hex": IDC, "rate": 100, "config": { "allowlist": [PK0_ACCT_HEX] },
         }));
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn unknown_and_refused_compositions_use_the_error_envelope() {
         let out = call(
-            json!({ "auth_type": "nope-allowlist", "payload_hex": "00", "id_commitment_hex": IDC, "rate": 100 }),
+            &json!({ "auth_type": "nope-allowlist", "payload_hex": "00", "id_commitment_hex": IDC, "rate": 100 }),
         );
         assert!(out.get("ok").is_none(), "{out}");
         assert!(
@@ -245,7 +245,7 @@ mod tests {
             "{out}"
         );
         let out = call(
-            json!({ "auth_type": "eth-attestation", "payload_hex": "00", "id_commitment_hex": IDC, "rate": 100 }),
+            &json!({ "auth_type": "eth-attestation", "payload_hex": "00", "id_commitment_hex": IDC, "rate": 100 }),
         );
         assert!(
             out["error"]
