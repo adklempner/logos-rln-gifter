@@ -30,6 +30,7 @@ use zksign_light::HttpZkNode;
 #[cfg(test)]
 use zksign_light::ZkNode;
 
+// OWNERSHIP: the generated host keeps the instance in a process-lifetime any-box, so the module owns all its data.
 pub trait RlnSignModule: Send + 'static {
     /// rln_auth_vector PRODUCE_METHOD. One JSON-string arg (ProduceRequest)
     /// → `{"payload_hex"}` or `{"error"}`. `auth_type` is
@@ -94,6 +95,7 @@ enum Kind {
     Lez,
 }
 
+// OWNERSHIP: file and scheme names are compile-time constants, returned without allocating.
 impl Kind {
     fn file(self) -> &'static str {
         match self {
@@ -204,6 +206,8 @@ fn persisted_key(persistence_path: &str, kind: Kind) -> Option<Result<[u8; 32], 
 
 /// The module's keys: the host-stamped persistence path and one cached key
 /// per kind. Shared by the module and its signers.
+// OWNERSHIP: the key slots are mutexes because the boxed Send + Sync key sources read the store through `&self`
+// while `import` and `on_context_ready` overwrite a cached key.
 #[derive(Default)]
 struct KeyStore {
     persistence_path: std::sync::OnceLock<String>,
@@ -281,6 +285,7 @@ impl KeyStore {
 /// A signer's view of the store: the module key of one kind (the signer
 /// itself honours `args.private_key` first).
 struct ModuleKeySource {
+    // OWNERSHIP: the registry's boxed key sources are owned and sit beside the store in `RlnSign`; a borrow would be self-referential, so each holds an Arc handle.
     store: Arc<KeyStore>,
     kind: Kind,
 }
@@ -308,6 +313,7 @@ impl ZkNode for SharedNode {
 }
 
 struct RlnSign {
+    // OWNERSHIP: shared with the registry's key sources (`ModuleKeySource`).
     store: Arc<KeyStore>,
     registry: ProduceRegistry,
     #[cfg(test)]
@@ -324,6 +330,7 @@ impl Default for RlnSign {
 fn parse_scheme_request(req_json: &str, what: &str) -> Result<(String, Value), String> {
     let v: Value = serde_json::from_str(req_json).map_err(|e| format!("{what}: {e}"))?;
     if let Some(s) = v.get("scheme").and_then(Value::as_str) {
+        // OWNERSHIP: `s` borrows `v`, which moves into the result; the scheme name is copied out.
         return Ok((s.to_string(), v));
     }
     let t = v
@@ -382,6 +389,7 @@ impl RlnSign {
 
     /// The logos key `args` names: its `public_key`, else the node's single
     /// auto-claim target.
+    // OWNERSHIP: the source label is a compile-time constant (`resolve_key`'s return type).
     fn logos_key(&self, args: &NodeArgs) -> Result<(String, &'static str), String> {
         #[cfg(test)]
         if let Some(n) = &self.test_node {
