@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use rln_auth_vector::VerifyRequest;
+use rln_auth_vector::VerifyRequestRef;
 use serde_json::{json, Value};
 
 use crate::auth;
@@ -642,13 +642,13 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
                 format!("unsupported authentication_type: '{auth_type}'"),
             );
         };
-        let verify_req = VerifyRequest {
-            auth_type: auth_type.clone(),
-            payload_hex: hex::encode(&req.authentication_payload),
-            id_commitment_hex: hex::encode(&req.identity_commitment),
+        let verify_req = VerifyRequestRef {
+            auth_type: &auth_type,
+            payload_hex: &hex::encode(&req.authentication_payload),
+            id_commitment_hex: &hex::encode(&req.identity_commitment),
             rate,
-            config: verifier_config.clone(),
-            peer_id: peer_id.map(str::to_owned),
+            config: verifier_config.as_ref(),
+            peer_id,
         };
         let verify_json = match serde_json::to_string(&verify_req) {
             Ok(s) => s,

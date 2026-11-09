@@ -6,7 +6,7 @@
 // supplied raw or produced by an rln_auth_vector provider module named in the
 // request — this module knows no vector by name.
 
-use rln_auth_vector::ProduceRequest;
+use rln_auth_vector::ProduceRequestRef;
 use serde_json::{json, Value};
 
 use crate::lp::{self, b64, b64_decode};
@@ -460,10 +460,10 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
         hex::decode(auth_payload_hex.trim_start_matches("0x"))
             .map_err(|e| format!("authPayload hex: {e}"))?
     } else if !auth_provider.is_empty() {
-        let prod_req = ProduceRequest {
-            auth_type: auth_type_req.to_string(),
-            id_commitment_hex,
-            args: a.get("authArgs").cloned(),
+        let prod_req = ProduceRequestRef {
+            auth_type: auth_type_req,
+            id_commitment_hex: &id_commitment_hex,
+            args: a.get("authArgs"),
         };
         let prod_json =
             serde_json::to_string(&prod_req).map_err(|e| format!("produce request: {e}"))?;
