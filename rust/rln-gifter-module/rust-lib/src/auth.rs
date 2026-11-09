@@ -40,8 +40,9 @@ pub fn append_missing(path: &str, nullifiers: &HashSet<String>) -> Result<(), St
         return Ok(());
     }
     let present = load_nullifiers(path)?;
-    let mut missing: Vec<&String> = nullifiers
+    let mut missing: Vec<&str> = nullifiers
         .iter()
+        .map(String::as_str)
         .filter(|n| !present.contains(*n))
         .collect();
     missing.sort();

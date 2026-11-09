@@ -135,6 +135,8 @@ struct ClientHandle(*mut ffi::LpClient);
 // Used per the owner-thread contract; the handle itself is read from any thread.
 unsafe impl Send for ClientHandle {}
 
+// OWNERSHIP: process-lifetime client table: written on the owner thread, read
+// by the serve worker; a handle is never destroyed.
 static CLIENTS: Mutex<Option<HashMap<String, ClientHandle>>> = Mutex::new(None);
 static OWNER: Mutex<Option<ThreadId>> = Mutex::new(None);
 
@@ -182,11 +184,7 @@ fn on_owner_thread() -> bool {
 /// deferring: a config-named module that can't be opened must fail the
 /// configuring call, not every later request.
 pub fn ensure_client(target: &str) -> Result<(), String> {
-    let have = lock(&CLIENTS)
-        .as_ref()
-        .map(|m| m.contains_key(target))
-        .unwrap_or(false);
-    if have {
+    if cached_client(target).is_some() {
         return Ok(());
     }
     if !on_owner_thread() {
@@ -203,18 +201,22 @@ pub fn ensure_client(target: &str) -> Result<(), String> {
     }
 }
 
+/// The opened client for `target`, one lookup under one lock.
+fn cached_client(target: &str) -> Option<*mut ffi::LpClient> {
+    lock(&CLIENTS).as_ref()?.get(target).map(|h| h.0)
+}
+
 fn client_ptr(target: &str) -> Option<*mut ffi::LpClient> {
-    let have = lock(&CLIENTS)
-        .as_ref()
-        .map(|m| m.contains_key(target))
-        .unwrap_or(false);
-    if !have && on_owner_thread() {
+    if let Some(client) = cached_client(target) {
+        return Some(client);
+    }
+    // A miss on the owner thread opens the client. `lp_client_create` is
+    // host code and runs with CLIENTS unlocked, so nothing it calls back into
+    // can block on the table; the table is read again once it returns.
+    if on_owner_thread() {
         create_client(target);
     }
-    lock(&CLIENTS)
-        .as_ref()
-        .and_then(|m| m.get(target))
-        .map(|h| h.0)
+    cached_client(target)
 }
 
 struct AsyncReply {
@@ -341,7 +343,7 @@ pub fn call_json(
 /// bare value for methods that don't wrap.
 pub fn call_libp2p(method: &str, args: &Value, timeout_ms: i32) -> Result<Value, String> {
     let v = call_json(LIBP2P_MODULE, method, args, timeout_ms)?;
-    let env = match v {
+    let mut env = match v {
         Value::String(s) if !s.is_empty() => {
             serde_json::from_str(&s).map_err(|e| format!("{method}: reply parse: {e}"))?
         }
@@ -357,7 +359,7 @@ pub fn call_libp2p(method: &str, args: &Value, timeout_ms: i32) -> Result<Value,
                 .unwrap_or("libp2p call failed");
             return Err(format!("{method}: {e}"));
         }
-        return Ok(env.get("value").cloned().unwrap_or(Value::Null));
+        return Ok(env.get_mut("value").map(Value::take).unwrap_or(Value::Null));
     }
     Ok(env)
 }

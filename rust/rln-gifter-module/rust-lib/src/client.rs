@@ -236,19 +236,19 @@ impl Attempt {
 
 /// One request→response with one allocator over the generic libp2p bridge,
 /// to the caller's grant shape; a failure says whether the allocator's own
-/// reply gave it.
+/// reply gave it. `request_b64` is `req` encoded, once for every allocator.
 fn ask(
     peer_id: &str,
     addrs: &[&str],
     req: &RlnGifterRequest,
-    config: Option<&str>,
+    request_b64: &str,
 ) -> Result<Value, (Attempt, bool)> {
     let unreplied = |a: Attempt| (a, false);
     let pr_args = json!({
         "peerId": peer_id,
         "multiaddrs": addrs,
         "proto": RLN_GIFTER_CODEC,
-        "requestB64": b64(&req.encode()),
+        "requestB64": request_b64,
         "timeoutMs": REQUEST_TIMEOUT_MS,
     });
     let pr = match lp::call_libp2p(
@@ -284,7 +284,7 @@ fn ask(
             "gifter response requestId mismatch".into(),
         )));
     }
-    judge(resp, config)
+    judge(resp, req.config_account_id.as_deref())
         .map(|success| grant_json(peer_id, &req.identity_commitment, success))
         .map_err(|a| (a, true))
 }
@@ -301,16 +301,15 @@ fn judge(
     if !resp.auth_success {
         return Err(Attempt::Next(
             resp.error
-                .or_else(|| resp.failure.as_ref().map(|f| f.error_message.clone()))
+                .or_else(|| resp.failure.map(|f| f.error_message))
                 .unwrap_or_else(|| "gifter authentication failed".into()),
         ));
     }
     let success = resp.success.ok_or_else(|| {
         let why = resp
             .failure
-            .as_ref()
-            .map(|f| f.error_message.clone())
-            .or(resp.error.clone())
+            .map(|f| f.error_message)
+            .or(resp.error)
             .unwrap_or_else(|| "gifter returned no membership".into());
         if why.starts_with(crate::wire::NOT_SUBMITTED_PREFIX) {
             Attempt::Next(why)
@@ -431,6 +430,10 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
     if let Some(why) = crate::wire::commitment_refusal(&id_commitment) {
         return Err(why.into());
     }
+    let request_id = format!(
+        "gift-{}",
+        &id_commitment_hex[..id_commitment_hex.len().min(16)]
+    );
 
     // Auth vector + payload. `authType` names the vector in the wire's
     //    OPEN authentication_type vocabulary — any type the target allocator is
@@ -459,7 +462,7 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
     } else if !auth_provider.is_empty() {
         let prod_req = ProduceRequest {
             auth_type: auth_type_req.to_string(),
-            id_commitment_hex: id_commitment_hex.clone(),
+            id_commitment_hex,
             args: a.get("authArgs").cloned(),
         };
         let prod_json =
@@ -478,46 +481,43 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
         return Err(format!("authType '{auth_type_req}' needs authPayload or authProvider").into());
     };
 
-    let request_id = format!(
-        "gift-{}",
-        &id_commitment_hex[..id_commitment_hex.len().min(16)]
-    );
     let req = RlnGifterRequest {
         request_id,
         authentication_type: auth_type_req.as_bytes().to_vec(),
         authentication_payload: auth_payload,
         identity_commitment: id_commitment,
         rate_limit: if rate > 0 { Some(rate) } else { None },
-        config_account_id: config.clone(),
+        config_account_id: config,
     };
+    let request_b64 = b64(&req.encode());
 
     // Discovered allocators first, rotated by the commitment so clients
     // spread over them; then the configured one. `last_reply` is the last
     // allocator tried when its own reply refused.
     let mut tried: Vec<String> = Vec::new();
     let mut last_reply: Option<(String, bool)> = None;
-    if let (true, Some(registry)) = (discover, config.as_deref()) {
+    if let (true, Some(registry)) = (discover, req.config_account_id.as_deref()) {
         match lookup(registry, auth_type_req).0 {
             Discovery::Found(mut found) => {
                 let at = req.identity_commitment[0] as usize % found.len();
                 found.rotate_left(at);
-                for c in &found {
+                for c in found {
                     // OWNERSHIP: borrowed view of the candidate's addresses
                     // (pointers only, no string copied).
                     let addrs: Vec<&str> = c.addrs.iter().map(String::as_str).collect();
-                    match ask(&c.peer_id, &addrs, &req, config.as_deref()) {
+                    match ask(&c.peer_id, &addrs, &req, &request_b64) {
                         Ok(mut out) => {
                             out["discovered"] = json!(true);
                             return Ok(out);
                         }
                         Err((Attempt::Next(e), replied)) => {
                             tried.push(format!("{}: {e}", c.peer_id));
-                            last_reply = replied.then(|| (c.peer_id.clone(), true));
+                            last_reply = replied.then_some((c.peer_id, true));
                         }
                         Err((Attempt::Stop(e), replied)) => {
                             return Err(Failure {
                                 error: format!("{}: {e}", c.peer_id),
-                                gifter: replied.then(|| (c.peer_id.clone(), true)),
+                                gifter: replied.then_some((c.peer_id, true)),
                             })
                         }
                     }
@@ -527,7 +527,7 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
         }
     }
     if let Some((peer_id, multiaddr)) = configured {
-        return match ask(peer_id, &[multiaddr], &req, config.as_deref()) {
+        return match ask(peer_id, &[multiaddr], &req, &request_b64) {
             Ok(mut out) => {
                 out["discovered"] = json!(false);
                 Ok(out)

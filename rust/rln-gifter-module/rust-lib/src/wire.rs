@@ -253,11 +253,18 @@ fn walk_fields<'a, F: FnMut(u64, FieldVal<'a>)>(buf: &'a [u8], mut f: F) -> Resu
     Ok(())
 }
 
-fn as_bytes(v: FieldVal) -> Vec<u8> {
+/// The field's bytes in the frame; a varint where bytes belong reads as none.
+fn as_slice(v: FieldVal<'_>) -> &[u8] {
     match v {
-        FieldVal::Bytes(b) => b.to_vec(),
-        FieldVal::Varint(_) => Vec::new(),
+        FieldVal::Bytes(b) => b,
+        FieldVal::Varint(_) => &[],
     }
+}
+
+fn as_bytes(v: FieldVal) -> Vec<u8> {
+    // OWNERSHIP: decoded messages own their fields; the frame is the
+    // caller's buffer.
+    as_slice(v).to_vec()
 }
 
 fn as_string(v: FieldVal) -> String {
@@ -400,11 +407,11 @@ impl RlnGifterResponse {
                 have_auth = true;
             }
             3 => m.error = Some(as_string(v)),
-            4 => match MembershipAllocationSuccess::decode(&as_bytes(v)) {
+            4 => match MembershipAllocationSuccess::decode(as_slice(v)) {
                 Ok(s) => m.success = Some(s),
                 Err(e) => sub_err = Some(e),
             },
-            5 => match MembershipAllocationFailure::decode(&as_bytes(v)) {
+            5 => match MembershipAllocationFailure::decode(as_slice(v)) {
                 Ok(f) => m.failure = Some(f),
                 Err(e) => sub_err = Some(e),
             },
@@ -552,6 +559,25 @@ mod tests {
         assert_eq!(s.block_number, 1234);
         assert_eq!(s.transaction_hash, vec![0xab, 0xcd]);
         assert_eq!(s.config_account_id.as_deref(), Some("cfgAccount"));
+    }
+
+    #[test]
+    fn a_varint_where_a_sub_message_belongs_decodes_as_an_empty_one() {
+        // request_id "r", auth_success 1, then fields 4 and 5 as varints
+        // (keys 0x20, 0x28: wire type 0) instead of length-delimited.
+        let buf = [0x0A, 0x01, b'r', 0x10, 0x01, 0x20, 0x07, 0x28, 0x00];
+        let dec = RlnGifterResponse::decode(&buf).unwrap();
+        let s = dec.success.unwrap();
+        assert_eq!((s.leaf_index, s.block_number), (0, 0));
+        assert!(s.merkle_root.is_empty() && s.transaction_hash.is_empty());
+        assert_eq!(s.config_account_id, None);
+        assert_eq!(dec.failure.unwrap().error_message, "");
+        // A length-delimited sub-message that does not parse fails the frame.
+        let bad = [0x0A, 0x01, b'r', 0x10, 0x01, 0x22, 0x01, 0x0A];
+        assert_eq!(
+            RlnGifterResponse::decode(&bad).err().as_deref(),
+            Some("truncated length")
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ mod lp;
 mod server;
 mod wire;
 
+// OWNERSHIP: the generated host keeps the instance in a process-lifetime any-box, so the module owns all its data.
 pub trait RlnGifterModule: Send + 'static {
     /// Client: request a gifted membership from an allocator. Args
     /// `{config?, identityCommitment, rate?, authType?, authPayload?,
@@ -134,9 +135,10 @@ impl RlnGifterModule for RlnGifter {
         let Some(method) = a.get("method").and_then(|m| m.as_str()) else {
             return json!({ "error": "missing method" }).to_string();
         };
-        let args = a.get("args").cloned().unwrap_or_else(|| json!([]));
+        let no_args = json!([]);
+        let args = a.get("args").unwrap_or(&no_args);
         let proxy = logos_rust_sdk::LogosModuleSDK::new().plugin("libp2p_module");
-        reply(proxy.call_json(method, &args).map_err(|e| e.to_string()))
+        reply(proxy.call_json(method, args).map_err(|e| e.to_string()))
     }
 
     // Record the owner thread and open the cross-module clients here, on the

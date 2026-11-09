@@ -521,9 +521,8 @@ fn worker_loop() {
             .as_ref()
             .ok()
             .and_then(|v| v.get("peerId"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        if let Err(e) = handle_stream(stream_id, peer_id.as_deref()) {
+            .and_then(Value::as_str);
+        if let Err(e) = handle_stream(stream_id, peer_id) {
             eprintln!("rln_gifter serve: stream {stream_id}: {e}");
         }
     }
@@ -1024,14 +1023,14 @@ mod tests {
         );
         // An open allocator serves the empty type on each registry.
         assert_eq!(
-            served_pairs(&[d.clone()], &HashMap::new()),
+            served_pairs(std::slice::from_ref(&d), &HashMap::new()),
             [(d.as_str(), "")]
         );
     }
 
     #[test]
     fn serve_refuses_more_pairs_than_an_advertisement_carries() {
-        let regs: Vec<String> = (1..=9u8).map(|i| acct(i)).collect();
+        let regs: Vec<String> = (1..=9u8).map(acct).collect();
         let a = format!(
             r#"{{"config":"{}","wallet":"w","registries":{}}}"#,
             regs[0],
@@ -1380,7 +1379,7 @@ mod tests {
 
         // A caller-supplied record is, at AD_REFRESH_S, under a fresh seqNo.
         let addrs = vec!["/ip4/203.0.113.7/tcp/4001".to_string()];
-        place(Some(addrs.clone()), 1);
+        place(Some(addrs), 1);
         scripted_libp2p(|| 1);
         lp::fake::advance(AD_REFRESH_S - 1);
         advertisement_tick().unwrap();
