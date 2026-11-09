@@ -227,6 +227,7 @@ impl KeyStore {
             .map(|p| p.exists())
             .unwrap_or(false)
     }
+    #[cfg(test)]
     fn cached(&self, kind: Kind) -> Option<[u8; 32]> {
         *self.slot(kind).lock().unwrap_or_else(|p| p.into_inner())
     }
