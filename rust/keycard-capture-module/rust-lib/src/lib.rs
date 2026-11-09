@@ -10,6 +10,7 @@ use rln_auth_vectors::claimant::{AllowlistClaimant, AttestationClaimant};
 use rln_auth_vectors::signer::KeycardSigner;
 use serde_json::json;
 
+// OWNERSHIP: the generated host keeps the instance in a process-lifetime any-box, so the module owns all its data.
 pub trait KeycardCaptureModule: Send + 'static {
     /// rln_auth_vector PRODUCE_METHOD for `keycard-allowlist` and
     /// `keycard-attestation`: IDENTIFY_CARD bound to the request's binding
