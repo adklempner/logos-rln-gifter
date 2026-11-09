@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::thread::ThreadId;
 use std::time::Duration;
 
@@ -138,7 +138,9 @@ unsafe impl Send for ClientHandle {}
 // OWNERSHIP: process-lifetime client table: written on the owner thread, read
 // by the serve worker; a handle is never destroyed.
 static CLIENTS: Mutex<Option<HashMap<String, ClientHandle>>> = Mutex::new(None);
-static OWNER: Mutex<Option<ThreadId>> = Mutex::new(None);
+// OWNERSHIP: set once by `init`, which the module's one-shot on_context_ready
+// calls; read from every thread.
+static OWNER: OnceLock<ThreadId> = OnceLock::new();
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
@@ -167,16 +169,18 @@ fn create_client(target: &str) -> bool {
 /// targets. Called from on_context_ready on the owner thread — the gifter's
 /// background serve threads then reach these clients via lp_invoke_async.
 pub fn init(targets: &[&str]) {
-    *lock(&OWNER) = Some(std::thread::current().id());
+    // The generated hook fires on_context_ready once per process, so the
+    // owner is recorded once.
+    let _ = OWNER.set(std::thread::current().id());
     for t in targets {
         create_client(t);
     }
 }
 
 fn on_owner_thread() -> bool {
-    lock(&OWNER)
-        .map(|id| id == std::thread::current().id())
-        .unwrap_or(false)
+    OWNER
+        .get()
+        .is_some_and(|id| *id == std::thread::current().id())
 }
 
 /// Open a client for `target` while still on the owner thread, so worker

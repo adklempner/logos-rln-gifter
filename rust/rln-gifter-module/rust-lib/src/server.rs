@@ -6,7 +6,6 @@
 // the funded payer's tx nonce stays ordered.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use rln_auth_vector::VerifyRequestRef;
@@ -159,7 +158,6 @@ static SERVER: Mutex<Option<Arc<ServerCfg>>> = Mutex::new(None);
 // (merge, file change) and the worker (reserve, release); its methods do file
 // IO only, so a wait on this lock never stalls the owner thread's event loop.
 static NULLIFIERS: LazyLock<Mutex<auth::NullifierStore>> = LazyLock::new(Mutex::default);
-static MOUNTED: AtomicBool = AtomicBool::new(false);
 /// What an advertisement carries: the service data, and the addresses of a
 /// caller-supplied record (`createXpr`) or None for libp2p's self-built one.
 #[derive(Clone, Debug, PartialEq)]
@@ -202,6 +200,8 @@ struct Advertiser {
 
 /// `serve`'s state, a field of the module on the owner thread.
 pub struct ServeState {
+    /// Whether the gifter protocol is mounted.
+    mounted: bool,
     /// The advertiser while `serve` drives it; `None` once the serve worker
     /// owns it and is libp2p_module's only caller.
     advertiser: Option<Advertiser>,
@@ -210,6 +210,7 @@ pub struct ServeState {
 impl Default for ServeState {
     fn default() -> Self {
         ServeState {
+            mounted: false,
             advertiser: Some(Advertiser::default()),
         }
     }
@@ -481,15 +482,14 @@ pub fn serve(state: &mut ServeState, args_json: &str) -> Result<Value, String> {
     advertise_first(advertiser, &mut reply, advertise_wanted)?;
     // Mount exactly once; re-calling serve just refreshes the config above
     // (e.g. a new wallet or verifier set) and the advertisement.
-    if !MOUNTED.swap(true, Ordering::SeqCst) {
-        if let Err(e) = lp::call_libp2p(
+    if !state.mounted {
+        lp::call_libp2p(
             "mountProtocol",
             &json!([RLN_GIFTER_CODEC]),
             MOUNT_TIMEOUT_MS,
-        ) {
-            MOUNTED.store(false, Ordering::SeqCst);
-            return Err(format!("mountProtocol: {e}"));
-        }
+        )
+        .map_err(|e| format!("mountProtocol: {e}"))?;
+        state.mounted = true;
     }
     // Spawn the serialized worker exactly once, after the advertisement and
     // the mount: from here on libp2p_module answers only it.
@@ -985,6 +985,8 @@ fn register(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use super::*;
 
     fn acct(b: u8) -> String {
@@ -1502,7 +1504,10 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("the worker is inside its libp2p call");
 
-        let mut state = ServeState { advertiser: None };
+        let mut state = ServeState {
+            mounted: true,
+            advertiser: None,
+        };
         lp::fake::install(Box::new(|_, m, _| Err(format!("unscripted {m}"))));
         let t = Instant::now();
         let reply = super::serve(&mut state, &args).unwrap();
