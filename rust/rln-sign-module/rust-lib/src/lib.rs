@@ -416,7 +416,7 @@ impl RlnSign {
     }
 
     fn identity_impl(&mut self, req_json: &str) -> Result<String, String> {
-        let (scheme, req) = parse_scheme_request(req_json, "identity")?;
+        let (scheme, mut req) = parse_scheme_request(req_json, "identity")?;
         let mut out = match scheme.as_str() {
             "eth" => self.eth_identity(&self.store.module_key(Kind::Eth)?)?,
             "lez" => self.lez_identity(&self.store.module_key(Kind::Lez)?),
@@ -433,8 +433,8 @@ impl RlnSign {
             }
             other => return Err(unknown_scheme(other)),
         };
-        if let Some(t) = req.get("auth_type") {
-            out["auth_type"] = t.clone();
+        if let Some(t) = req.get_mut("auth_type") {
+            out["auth_type"] = t.take();
         }
         Ok(out.to_string())
     }
