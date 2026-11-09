@@ -4,8 +4,6 @@
 // and from the gifter side so a headless allocator never does either.
 // FEATURE: RLN membership gifter keycard capture module (client-side PC/SC)
 
-use std::sync::OnceLock;
-
 use keycard_client::reader_card_present;
 use rln_auth_vector::{dispatch_produce, ProduceRegistry};
 use rln_auth_vectors::claimant::{AllowlistClaimant, AttestationClaimant};
@@ -46,25 +44,27 @@ mod generated {
 }
 pub use generated::*;
 
-fn registry() -> &'static ProduceRegistry {
-    static R: OnceLock<ProduceRegistry> = OnceLock::new();
-    R.get_or_init(|| {
-        ProduceRegistry::new()
-            .signer(KeycardSigner)
-            .claimant(AllowlistClaimant)
-            .claimant(AttestationClaimant)
-    })
+struct KeycardCapture {
+    registry: ProduceRegistry,
 }
 
-#[derive(Default)]
-struct KeycardCapture {}
+impl Default for KeycardCapture {
+    fn default() -> Self {
+        Self {
+            registry: ProduceRegistry::new()
+                .signer(KeycardSigner)
+                .claimant(AllowlistClaimant)
+                .claimant(AttestationClaimant),
+        }
+    }
+}
 
 impl KeycardCaptureModule for KeycardCapture {
     // Return a plain String (not Result): the codegen maps a Rust Result to
     // returnType "LogosResult", which the host marshals to null in the UI; a
     // plain String maps to QString and passes through. Errors are {"error":...}.
     fn produce_auth(&mut self, args_json: String) -> String {
-        dispatch_produce(&args_json, registry())
+        dispatch_produce(&args_json, &self.registry)
     }
     fn card_status(&mut self) -> String {
         card_status_impl().unwrap_or_else(|e| json!({ "present": false, "error": e }).to_string())
