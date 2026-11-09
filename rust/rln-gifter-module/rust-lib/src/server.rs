@@ -159,7 +159,8 @@ fn parse_registries(
 static SERVER: Mutex<Option<Arc<ServerCfg>>> = Mutex::new(None);
 // OWNERSHIP: one store for the process, shared by `serve` on the owner thread
 // (merge, file change) and the worker (reserve, release); its methods do file
-// IO only, so a wait on this lock never stalls the owner thread's event loop.
+// IO only and no libp2p or module call runs under this lock, so the owner
+// thread waits at most for a file write.
 static NULLIFIERS: LazyLock<Mutex<auth::NullifierStore>> = LazyLock::new(Mutex::default);
 /// What an advertisement carries: the service data, and the addresses of a
 /// caller-supplied record (`createXpr`) or None for libp2p's self-built one.
@@ -373,16 +374,19 @@ impl Advertiser {
 /// `{mounted:true, registries:[…], advertised:bool, advertisePending?,
 ///  serviceId?, serviceData?, advertisedToPeers?, advertiseError?}`.
 pub fn serve(state: &mut ServeState, args_json: &str) -> Result<Value, String> {
-    let a: Value = serde_json::from_str(args_json).map_err(|e| format!("serve args: {e}"))?;
+    let mut a: Value = serde_json::from_str(args_json).map_err(|e| format!("serve args: {e}"))?;
+    // Moved out of the parsed args before `config` borrows them, so the wallet
+    // and the verifier entries move into the stored config; the checks stay
+    // below, in their original order.
+    let wallet_arg = a.get_mut("wallet").map(Value::take);
+    let auth_verifiers_arg = a.get_mut("authVerifiers").map(Value::take);
     let config = a
         .get("config")
         .and_then(Value::as_str)
         .ok_or("missing config")?;
-    let wallet = a
-        .get("wallet")
-        .and_then(Value::as_str)
-        .ok_or("missing wallet")?
-        .to_string();
+    let Some(Value::String(wallet)) = wallet_arg else {
+        return Err("missing wallet".into());
+    };
     let max_rate_limit = a
         .get("maxRateLimit")
         .and_then(Value::as_u64)
@@ -415,23 +419,18 @@ pub fn serve(state: &mut ServeState, args_json: &str) -> Result<Value, String> {
     // A present-but-malformed authVerifiers must fail serve, never silently
     // degrade to an open allocator.
     let mut auth_verifiers: HashMap<String, (String, Option<Value>)> = HashMap::new();
-    match a.get("authVerifiers") {
+    match auth_verifiers_arg {
         None | Some(Value::Null) => {}
         Some(Value::Object(map)) => {
-            for (atype, v) in map {
-                let module = v.get("module").and_then(Value::as_str).unwrap_or("");
-                if module.is_empty() {
-                    return Err(format!("authVerifiers['{atype}'] needs a module"));
-                }
+            for (atype, mut v) in map {
+                let module = match v.get_mut("module").map(Value::take) {
+                    Some(Value::String(m)) if !m.is_empty() => m,
+                    _ => return Err(format!("authVerifiers['{atype}'] needs a module")),
+                };
                 // Open the verifier's lp client HERE, on the owner thread —
                 // the serve worker cannot create clients, only use them.
-                lp::ensure_client(module).map_err(|e| format!("authVerifiers['{atype}']: {e}"))?;
-                // OWNERSHIP: the stored config outlives the parsed args; the
-                // type, module and opaque config are copied out of them.
-                auth_verifiers.insert(
-                    atype.clone(),
-                    (module.to_string(), v.get("config").cloned()),
-                );
+                lp::ensure_client(&module).map_err(|e| format!("authVerifiers['{atype}']: {e}"))?;
+                auth_verifiers.insert(atype, (module, v.get_mut("config").map(Value::take)));
             }
         }
         Some(_) => {

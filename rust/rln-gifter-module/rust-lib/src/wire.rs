@@ -218,8 +218,9 @@ fn read_varint(buf: &[u8], i: &mut usize) -> Option<u64> {
     }
 }
 
-// OWNERSHIP: a view into the frame being walked (a u64 or a borrowed slice);
-// Copy, so the field readers take it by value and own nothing.
+// OWNERSHIP: a view into the frame being walked (a u64 or a borrowed slice).
+// Copy because the field readers only read it: taking it by value is then
+// lint-clean (clippy::needless_pass_by_value) and callers need no borrow.
 #[derive(Clone, Copy)]
 enum FieldVal<'a> {
     Varint(u64),

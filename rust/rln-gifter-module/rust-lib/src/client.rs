@@ -237,20 +237,23 @@ impl Attempt {
 /// One request→response with one allocator over the generic libp2p bridge,
 /// to the caller's grant shape; a failure says whether the allocator's own
 /// reply gave it. `request_b64` is `req` encoded, once for every allocator.
-fn ask(
+fn ask<A: AsRef<str>>(
     peer_id: &str,
-    addrs: &[&str],
+    addrs: &[A],
     req: &RlnGifterRequest,
     request_b64: &str,
 ) -> Result<Value, (Attempt, bool)> {
     let unreplied = |a: Attempt| (a, false);
-    let pr_args = json!({
+    // The addresses are written into the placeholder straight from the
+    // caller's slice, which keeps the key order of the literal.
+    let mut pr_args = json!({
         "peerId": peer_id,
-        "multiaddrs": addrs,
+        "multiaddrs": null,
         "proto": RLN_GIFTER_CODEC,
         "requestB64": request_b64,
         "timeoutMs": REQUEST_TIMEOUT_MS,
     });
+    pr_args["multiaddrs"] = addrs.iter().map(|a| a.as_ref()).collect();
     let pr = match lp::call_libp2p(
         "protocolRequest",
         &json!([pr_args.to_string()]),
@@ -502,10 +505,7 @@ pub fn request(args_json: &str) -> Result<Value, Failure> {
                 let at = req.identity_commitment[0] as usize % found.len();
                 found.rotate_left(at);
                 for c in found {
-                    // OWNERSHIP: borrowed view of the candidate's addresses
-                    // (pointers only, no string copied).
-                    let addrs: Vec<&str> = c.addrs.iter().map(String::as_str).collect();
-                    match ask(&c.peer_id, &addrs, &req, &request_b64) {
+                    match ask(&c.peer_id, &c.addrs, &req, &request_b64) {
                         Ok(mut out) => {
                             out["discovered"] = json!(true);
                             return Ok(out);
