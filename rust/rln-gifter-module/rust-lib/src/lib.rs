@@ -98,7 +98,10 @@ mod generated {
 pub use generated::*;
 
 #[derive(Default)]
-struct RlnGifter {}
+struct RlnGifter {
+    /// The allocator side; `serve` runs on the owner thread with `&mut self`.
+    server: server::ServeState,
+}
 
 /// An entry point's reply: the value itself, or `{"error": why}`.
 fn reply(r: Result<serde_json::Value, String>) -> String {
@@ -124,7 +127,7 @@ impl RlnGifterModule for RlnGifter {
     }
 
     fn serve(&mut self, args_json: String) -> String {
-        reply(server::serve(&args_json))
+        reply(server::serve(&mut self.server, &args_json))
     }
 
     fn libp2p_call(&mut self, args_json: String) -> String {
