@@ -1,6 +1,8 @@
 //! What gets signed: the identity commitment, the highest rate the payload
 //! may be used for, the gifter it is meant for, and the authoriser's evidence.
 
+use std::borrow::Cow;
+
 use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
 
@@ -26,6 +28,13 @@ pub struct Binding {
 /// a JSON object (the membership module may stringify `auth_args`) is
 /// unwrapped; anything else that is not an object is an error.
 pub fn args_object(raw: Option<&Value>) -> Result<Option<Map<String, Value>>, String> {
+    Ok(args_object_cow(raw)?.map(Cow::into_owned))
+}
+
+/// [`args_object`] for readers: an object `raw` is borrowed, a stringified
+/// one is parsed into an owned map.
+// OWNERSHIP: the Cow borrows `raw`'s map; only the parsed string form owns one.
+pub fn args_object_cow(raw: Option<&Value>) -> Result<Option<Cow<'_, Map<String, Value>>>, String> {
     match raw {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) if s.trim().is_empty() => Ok(None),
@@ -34,11 +43,11 @@ pub fn args_object(raw: Option<&Value>) -> Result<Option<Map<String, Value>>, St
                 .map_err(|e| format!("args: string is not valid JSON: {e}"))?;
             match inner {
                 Value::Null => Ok(None),
-                Value::Object(o) => Ok(Some(o)),
+                Value::Object(o) => Ok(Some(Cow::Owned(o))),
                 other => Err(format!("args: expected JSON object, got {other}")),
             }
         }
-        Some(Value::Object(o)) => Ok(Some(o.clone())),
+        Some(Value::Object(o)) => Ok(Some(Cow::Borrowed(o))),
         Some(v) => Err(format!("args: expected JSON object, got {v}")),
     }
 }
@@ -78,7 +87,7 @@ impl Binding {
     /// caller's and surface as errors.
     pub fn from_produce(req: &ProduceRequest) -> Result<Binding, String> {
         let id_commitment = hex32_bytes("id_commitment_hex", &req.id_commitment_hex)?;
-        let args = args_object(req.args.as_ref())?;
+        let args = args_object_cow(req.args.as_ref())?;
         let get = |k: &str| args.as_ref().and_then(|o| o.get(k));
         Ok(Binding {
             id_commitment,
@@ -249,7 +258,7 @@ mod tests {
         // Every field moves the digest.
         let b2 = Binding {
             audience: "x".into(),
-            ..b.clone()
+            ..b
         };
         assert_ne!(
             binding_digest(&AuthType::new("lez", "allowlist"), &b2, &[]),

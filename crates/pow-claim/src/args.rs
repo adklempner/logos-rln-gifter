@@ -1,6 +1,6 @@
 //! `ProduceRequest.args` parsing (§4.2 plus PoC extras).
 
-use rln_auth_vector::{args_object, hex::norm_hex32, parse_audience, parse_rate_max};
+use rln_auth_vector::{args_object_cow, hex::norm_hex32, parse_audience, parse_rate_max};
 use serde_json::Value;
 
 pub use rln_auth_vector::hex::hex32_bytes;
@@ -78,7 +78,7 @@ impl ProduceArgs {
     /// RLN membership module may stringify `auth_args`). An empty string or
     /// `null` means defaults.
     pub fn parse(raw: Option<&Value>) -> Result<ProduceArgs, String> {
-        let Some(o) = args_object(raw)? else {
+        let Some(o) = args_object_cow(raw)? else {
             return Ok(Self::default());
         };
         let d = Self::default();

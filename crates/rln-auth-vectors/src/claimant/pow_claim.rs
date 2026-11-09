@@ -5,7 +5,7 @@
 //! `/pow/status` auto-claim targets.
 
 use pow_claim::{gather, Evidence, HttpNode, NodeApi, ProduceArgs};
-use rln_auth_vector::{args_object, Binding, Claimant};
+use rln_auth_vector::{args_object_cow, Binding, Claimant};
 use serde_json::Value;
 
 use crate::scheme::logos::NAME as LOGOS;
@@ -26,7 +26,7 @@ impl PowClaimant {
 pub fn claim_args(raw: Option<&Value>) -> Result<ProduceArgs, String> {
     let mut a = ProduceArgs::parse(raw)?;
     if a.claim_address.is_none() {
-        if let Some(o) = args_object(raw)? {
+        if let Some(o) = args_object_cow(raw)? {
             if let Some(Value::String(k)) = o.get("public_key") {
                 a.claim_address = Some(rln_auth_vector::norm_hex32("public_key", k)?);
             }

@@ -82,13 +82,12 @@ fn real_ownership_is_path_b_via_note_id() {
         .iter()
         .find(|o| o["opcode"].as_u64() == Some(0))
         .unwrap();
-    let inputs: Vec<String> = transfer["payload"]["inputs"]
+    let in_inputs = transfer["payload"]["inputs"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|i| s(i).to_lowercase())
-        .collect();
-    assert!(inputs.contains(&nid), "NoteId {nid} not in Transfer inputs");
+        .any(|i| s(i).to_lowercase() == nid);
+    assert!(in_inputs, "NoteId {nid} not in Transfer inputs");
     assert!(transfer["payload"]["outputs"]
         .as_array()
         .unwrap()

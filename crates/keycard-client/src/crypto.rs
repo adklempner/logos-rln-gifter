@@ -26,9 +26,7 @@ pub fn ecdh_generate(card_pub_bytes: &[u8]) -> Result<([u8; 32], Vec<u8>), Strin
     let card_pub =
         PublicKey::from_sec1_bytes(card_pub_bytes).map_err(|e| format!("card pubkey: {e}"))?;
     let shared = diffie_hellman(eph.to_nonzero_scalar(), card_pub.as_affine());
-    let secret: [u8; 32] = shared
-        .raw_secret_bytes()
-        .as_slice()
+    let secret: [u8; 32] = shared.raw_secret_bytes()[..]
         .try_into()
         .map_err(|_| "ecdh len")?;
     let eph_pub = eph.public_key().to_encoded_point(false).as_bytes().to_vec();
@@ -64,7 +62,7 @@ fn append_padding(data: &[u8]) -> Vec<u8> {
     let pad = 16 - (data.len() % 16);
     let mut out = data.to_vec();
     out.push(0x80);
-    out.extend(std::iter::repeat(0u8).take(pad - 1));
+    out.extend(std::iter::repeat_n(0u8, pad - 1));
     out
 }
 
@@ -92,8 +90,7 @@ fn cbc_encrypt_raw(cipher: &Aes256, iv: &[u8], data: &[u8]) -> Vec<u8> {
     let mut prev = [0u8; 16];
     prev.copy_from_slice(iv);
     for chunk in data.chunks(16) {
-        let mut b =
-            aes::cipher::generic_array::GenericArray::clone_from_slice(&xor16(chunk, &prev));
+        let mut b = aes::Block::from(xor16(chunk, &prev));
         cipher.encrypt_block(&mut b);
         prev.copy_from_slice(&b);
         out.extend_from_slice(&b);
@@ -106,7 +103,11 @@ fn cbc_decrypt_raw(cipher: &Aes256, iv: &[u8], data: &[u8]) -> Vec<u8> {
     let mut prev = [0u8; 16];
     prev.copy_from_slice(iv);
     for chunk in data.chunks(16) {
-        let mut b = aes::cipher::generic_array::GenericArray::clone_from_slice(chunk);
+        #[expect(
+            deprecated,
+            reason = "aes 0.8 blocks are generic-array 0.14, deprecated as a crate; clone_from_slice keeps the panic on a short final chunk"
+        )]
+        let mut b = aes::Block::clone_from_slice(chunk);
         cipher.decrypt_block(&mut b);
         let p = xor16(&b, &prev);
         prev.copy_from_slice(chunk);
@@ -134,4 +135,30 @@ pub fn calculate_mac(meta: &[u8; 16], data: &[u8], mac_key: &[u8]) -> [u8; 16] {
     let mut mac = [0u8; 16];
     mac.copy_from_slice(&ct[n - 32..n - 16]);
     mac
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KEY: [u8; 32] = [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+        0x1e, 0x1f,
+    ];
+    const IV: [u8; 16] = [
+        0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe,
+        0xff,
+    ];
+
+    #[test]
+    fn cbc_matches_openssl_aes_256_cbc_on_iso7816_padding() {
+        // `openssl enc -aes-256-cbc -nopad` of the message ‖ 0x80 ‖ 0x00 × 9.
+        let ct = encrypt_data(b"keycard secure channel", &KEY, &IV);
+        assert_eq!(
+            hex::encode(&ct),
+            "492c3d783c680e478d0863f6f2c216cb7980d98602c71d82d7e215159f07a704"
+        );
+        assert_eq!(decrypt_data(&ct, &KEY, &IV), b"keycard secure channel");
+    }
 }

@@ -33,12 +33,13 @@ impl Identity for PeerId {
 pub fn parse_peer_id(s: &str) -> Result<String, String> {
     let s = s.trim();
     let h = strip_0x(s);
-    let bytes = if !h.is_empty() && h.len() % 2 == 0 && h.bytes().all(|b| b.is_ascii_hexdigit()) {
-        hex::decode(h).map_err(|e| format!("peer id '{s}': {e}"))?
-    } else {
-        s.from_base58()
-            .map_err(|e| format!("peer id '{s}': neither hex nor base58 ({e:?})"))?
-    };
+    let bytes =
+        if !h.is_empty() && h.len().is_multiple_of(2) && h.bytes().all(|b| b.is_ascii_hexdigit()) {
+            hex::decode(h).map_err(|e| format!("peer id '{s}': {e}"))?
+        } else {
+            s.from_base58()
+                .map_err(|e| format!("peer id '{s}': neither hex nor base58 ({e:?})"))?
+        };
     // A multihash with one-byte code and length varints (every libp2p
     // identity key kind: identity/ed25519 38 bytes, sha256/secp256k1 34).
     if bytes.len() < 3 || bytes[1] as usize != bytes.len() - 2 {

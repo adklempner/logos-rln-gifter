@@ -3,7 +3,7 @@
 //! leaves the node. `K` is `args.public_key`, else the node's single
 //! `/pow/status` auto-claim target.
 
-use rln_auth_vector::{args_object, norm_hex32, Binding, Identity, Signer};
+use rln_auth_vector::{args_object_cow, norm_hex32, Binding, Identity, Signer};
 use serde_json::Value;
 use zksign_light::{HttpZkNode, ZkNode};
 
@@ -34,7 +34,7 @@ impl Default for NodeArgs {
 
 impl NodeArgs {
     pub fn parse(raw: Option<&Value>) -> Result<NodeArgs, String> {
-        let Some(o) = args_object(raw)? else {
+        let Some(o) = args_object_cow(raw)? else {
             return Ok(NodeArgs::default());
         };
         let mut a = NodeArgs::default();

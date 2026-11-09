@@ -35,8 +35,8 @@ pub mod types;
 
 pub use authtype::AuthType;
 pub use binding::{
-    args_object, binding_digest, parse_audience, parse_rate_max, Binding, DEFAULT_RATE_MAX,
-    MAX_AUDIENCE_LEN,
+    args_object, args_object_cow, binding_digest, parse_audience, parse_rate_max, Binding,
+    DEFAULT_RATE_MAX, MAX_AUDIENCE_LEN,
 };
 pub use flow::{produce_flow, verify_flow};
 pub use frame::{frame, unframe, PAYLOAD_VERSION};

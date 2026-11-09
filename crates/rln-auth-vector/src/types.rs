@@ -95,7 +95,7 @@ pub fn parse_produce_reply(reply: &Value) -> Result<ProduceReply, String> {
     if let Some(e) = reply.get("error").and_then(Value::as_str) {
         return Err(e.to_string());
     }
-    serde_json::from_value(reply.clone()).map_err(|e| format!("produce_auth reply: {e}"))
+    ProduceReply::deserialize(reply).map_err(|e| format!("produce_auth reply: {e}"))
 }
 
 /// Parse a verifier module's reply (the caller side of [`VERIFY_METHOD`]),
@@ -104,7 +104,7 @@ pub fn parse_verdict(reply: &Value) -> Result<Verdict, String> {
     if let Some(e) = reply.get("error").and_then(Value::as_str) {
         return Err(e.to_string());
     }
-    serde_json::from_value(reply.clone()).map_err(|e| format!("verify_auth reply: {e}"))
+    Verdict::deserialize(reply).map_err(|e| format!("verify_auth reply: {e}"))
 }
 
 #[cfg(test)]

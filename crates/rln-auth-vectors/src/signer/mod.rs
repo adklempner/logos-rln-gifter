@@ -7,7 +7,7 @@ pub mod lez;
 pub mod logos;
 pub mod peer;
 
-use rln_auth_vector::{args_object, strip_0x};
+use rln_auth_vector::{args_object_cow, strip_0x};
 use serde_json::Value;
 
 pub use eth::EthSigner;
@@ -35,7 +35,7 @@ impl KeySource for StaticKey {
 
 /// `args.private_key` as 32 bytes, if the request carries one.
 pub fn private_key_arg(args: Option<&Value>) -> Result<Option<[u8; 32]>, String> {
-    let Some(o) = args_object(args)? else {
+    let Some(o) = args_object_cow(args)? else {
         return Ok(None);
     };
     match o.get("private_key") {

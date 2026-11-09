@@ -2,7 +2,7 @@
 //! is the libp2p node's peer id, which only the host knows
 //! (`libp2p_module.peerInfo`), so `identity` takes it from `args.peer_id`.
 
-use rln_auth_vector::{args_object, Binding, Identity, Signer};
+use rln_auth_vector::{args_object_cow, Binding, Identity, Signer};
 use serde_json::Value;
 
 use crate::scheme::peer::{parse_peer_id, PeerId, NAME};
@@ -22,7 +22,7 @@ impl Signer for PeerSigner {
         Ok(Vec::new())
     }
     fn identity(&self, args: Option<&Value>) -> Result<Box<dyn Identity>, String> {
-        let raw = args_object(args)?
+        let raw = args_object_cow(args)?
             .and_then(|o| o.get("peer_id").and_then(Value::as_str).map(str::to_owned))
             .ok_or("peer identity: args.peer_id is required (the node's own, from libp2p_module.peerInfo)")?;
         Ok(Box::new(PeerId(parse_peer_id(&raw)?)))
