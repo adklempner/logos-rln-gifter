@@ -25,11 +25,19 @@ pub trait KeycardCaptureModule: Send + 'static {
     fn on_context_ready(&mut self, _ctx: &RustModuleContext) {}
 }
 
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/generated/provider_gen.rs"));
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/generated/provider_gen.rs"
+));
 
 fn registry() -> &'static ProduceRegistry {
     static R: OnceLock<ProduceRegistry> = OnceLock::new();
-    R.get_or_init(|| ProduceRegistry::new().signer(KeycardSigner).claimant(AllowlistClaimant).claimant(AttestationClaimant))
+    R.get_or_init(|| {
+        ProduceRegistry::new()
+            .signer(KeycardSigner)
+            .claimant(AllowlistClaimant)
+            .claimant(AttestationClaimant)
+    })
 }
 
 #[derive(Default)]
