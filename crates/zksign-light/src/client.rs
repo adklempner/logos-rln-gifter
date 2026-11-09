@@ -22,13 +22,18 @@ fn base(url: &str) -> &str {
     url.trim().trim_end_matches('/')
 }
 
-fn finish(method: &str, path: &str, r: Result<ureq::Response, ureq::Error>) -> Result<Value, String> {
+fn finish(
+    method: &str,
+    path: &str,
+    r: Result<ureq::Response, ureq::Error>,
+) -> Result<Value, String> {
     match r {
         Ok(resp) => {
             let body = resp
                 .into_string()
                 .map_err(|e| format!("node {method} {path}: reading body: {e}"))?;
-            serde_json::from_str(&body).map_err(|e| format!("node {method} {path}: invalid JSON: {e}: {body}"))
+            serde_json::from_str(&body)
+                .map_err(|e| format!("node {method} {path}: invalid JSON: {e}: {body}"))
         }
         Err(ureq::Error::Status(code, resp)) => {
             let body = resp.into_string().unwrap_or_default();
@@ -49,7 +54,9 @@ fn status_error(method: &str, path: &str, code: u16, body: &str) -> String {
 /// `GET <url>/pow/status` as JSON.
 pub fn pow_status(url: &str, timeout_ms: u64) -> Result<Value, String> {
     let path = "/pow/status";
-    let r = agent(timeout_ms).get(&format!("{}{path}", base(url))).call();
+    let r = agent(timeout_ms)
+        .get(&format!("{}{path}", base(url)))
+        .call();
     finish("GET", path, r)
 }
 
@@ -63,7 +70,12 @@ pub fn sign_zk_body(digest: &[u8; 32], pk_hex: &str) -> Value {
 /// by the node) with the node-held key `pk_hex`; returns `pi_a‖pi_b‖pi_c`.
 /// `pk_hex` is normalised with [`crate::norm_hex32`] first. The timeout is
 /// at least [`SIGN_MIN_TIMEOUT_MS`].
-pub fn sign_zk(url: &str, digest: &[u8; 32], pk_hex: &str, timeout_ms: u64) -> Result<[u8; 128], String> {
+pub fn sign_zk(
+    url: &str,
+    digest: &[u8; 32],
+    pk_hex: &str,
+    timeout_ms: u64,
+) -> Result<[u8; 128], String> {
     let pk = crate::norm_hex32("pk", pk_hex)?;
     let path = "/wallet/sign/zk";
     let r = agent(timeout_ms.max(SIGN_MIN_TIMEOUT_MS))
@@ -150,11 +162,21 @@ mod tests {
 
     #[test]
     fn sig_reply_errors() {
-        assert!(parse_sig_reply(&json!({})).unwrap_err().contains("missing sig"));
-        assert!(parse_sig_reply(&json!({"sig": "x"})).unwrap_err().contains("missing sig"));
-        assert!(parse_sig_reply(&reply(31, 64, 32)).unwrap_err().contains("pi_a"));
-        assert!(parse_sig_reply(&reply(32, 32, 32)).unwrap_err().contains("pi_b"));
-        assert!(parse_sig_reply(&reply(32, 64, 33)).unwrap_err().contains("pi_c"));
+        assert!(parse_sig_reply(&json!({}))
+            .unwrap_err()
+            .contains("missing sig"));
+        assert!(parse_sig_reply(&json!({"sig": "x"}))
+            .unwrap_err()
+            .contains("missing sig"));
+        assert!(parse_sig_reply(&reply(31, 64, 32))
+            .unwrap_err()
+            .contains("pi_a"));
+        assert!(parse_sig_reply(&reply(32, 32, 32))
+            .unwrap_err()
+            .contains("pi_b"));
+        assert!(parse_sig_reply(&reply(32, 64, 33))
+            .unwrap_err()
+            .contains("pi_c"));
         let bad = json!({"sig": {"pi_a": "zz".repeat(32), "pi_b": "bb".repeat(64), "pi_c": "cc".repeat(32)}});
         assert!(parse_sig_reply(&bad).unwrap_err().contains("pi_a"));
         let missing = json!({"sig": {"pi_a": "aa".repeat(32), "pi_c": "cc".repeat(32)}});
@@ -170,7 +192,10 @@ mod tests {
     #[test]
     fn http_404_carries_the_old_node_hint() {
         let e = status_error("POST", "/wallet/sign/zk", 404, "");
-        assert_eq!(e, format!("node POST /wallet/sign/zk: HTTP 404 ({OLD_NODE_HINT})"));
+        assert_eq!(
+            e,
+            format!("node POST /wallet/sign/zk: HTTP 404 ({OLD_NODE_HINT})")
+        );
         let e = status_error("GET", "/pow/status", 500, "boom");
         assert_eq!(e, "node GET /pow/status: HTTP 500 boom");
     }

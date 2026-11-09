@@ -5,7 +5,9 @@
 
 use std::any::Any as StdAny;
 
-use rln_auth_vector::{parse_audience, Authoriser, Cfg, Check, Evidence, Identity, Outcome, Scheme};
+use rln_auth_vector::{
+    parse_audience, Authoriser, Cfg, Check, Evidence, Identity, Outcome, Scheme,
+};
 use serde_json::Value;
 
 pub const NAME: &str = "any";
@@ -29,7 +31,9 @@ impl Authoriser for Any {
         Ok(Box::new(Config { audience }))
     }
     fn audience<'a>(&self, cfg: &'a dyn StdAny) -> &'a str {
-        cfg.downcast_ref::<Config>().map(|c| c.audience.as_str()).unwrap_or("")
+        cfg.downcast_ref::<Config>()
+            .map(|c| c.audience.as_str())
+            .unwrap_or("")
     }
     fn decode_evidence<'a>(&self, rest: &'a [u8]) -> Outcome<(Evidence, &'a [u8])> {
         Outcome::Ok((Box::new(()), rest))

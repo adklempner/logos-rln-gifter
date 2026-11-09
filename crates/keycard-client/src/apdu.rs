@@ -20,7 +20,14 @@ pub struct Response {
 
 impl Command {
     pub fn new(cla: u8, ins: u8, p1: u8, p2: u8, data: Vec<u8>) -> Self {
-        Command { cla, ins, p1, p2, data, le: None }
+        Command {
+            cla,
+            ins,
+            p1,
+            p2,
+            data,
+            le: None,
+        }
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -39,10 +46,16 @@ impl Command {
 pub fn parse_response(raw: &[u8]) -> Response {
     let n = raw.len();
     if n < 2 {
-        return Response { data: vec![], sw: 0 };
+        return Response {
+            data: vec![],
+            sw: 0,
+        };
     }
     let sw = ((raw[n - 2] as u16) << 8) | (raw[n - 1] as u16);
-    Response { data: raw[..n - 2].to_vec(), sw }
+    Response {
+        data: raw[..n - 2].to_vec(),
+        sw,
+    }
 }
 
 pub fn find_tag(data: &[u8], tag: u8) -> Option<Vec<u8>> {

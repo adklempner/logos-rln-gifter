@@ -30,8 +30,8 @@ pub fn args_object(raw: Option<&Value>) -> Result<Option<Map<String, Value>>, St
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) if s.trim().is_empty() => Ok(None),
         Some(Value::String(s)) => {
-            let inner: Value =
-                serde_json::from_str(s).map_err(|e| format!("args: string is not valid JSON: {e}"))?;
+            let inner: Value = serde_json::from_str(s)
+                .map_err(|e| format!("args: string is not valid JSON: {e}"))?;
             match inner {
                 Value::Null => Ok(None),
                 Value::Object(o) => Ok(Some(o)),
@@ -48,7 +48,10 @@ pub fn parse_audience(v: Option<&Value>, field: &str) -> Result<String, String> 
     match v {
         None | Some(Value::Null) => Ok(String::new()),
         Some(Value::String(s)) if s.len() <= MAX_AUDIENCE_LEN => Ok(s.clone()),
-        Some(Value::String(s)) => Err(format!("{field}: at most {MAX_AUDIENCE_LEN} bytes, got {}", s.len())),
+        Some(Value::String(s)) => Err(format!(
+            "{field}: at most {MAX_AUDIENCE_LEN} bytes, got {}",
+            s.len()
+        )),
         Some(v) => Err(format!("{field}: expected string, got {v}")),
     }
 }
@@ -58,7 +61,9 @@ pub fn parse_audience(v: Option<&Value>, field: &str) -> Result<String, String> 
 pub fn parse_rate_max(v: Option<&Value>, field: &str) -> Result<u64, String> {
     match v {
         None | Some(Value::Null) => Ok(DEFAULT_RATE_MAX),
-        Some(Value::Number(n)) => n.as_u64().ok_or_else(|| format!("{field}: expected unsigned integer, got {n}")),
+        Some(Value::Number(n)) => n
+            .as_u64()
+            .ok_or_else(|| format!("{field}: expected unsigned integer, got {n}")),
         Some(Value::String(s)) => s
             .trim()
             .parse::<u64>()
@@ -94,7 +99,11 @@ impl Binding {
             Ok(c) => c,
             Err(v) => return Outcome::Reject(reason::idc_len(v.len())),
         };
-        Outcome::Ok(Binding { id_commitment, rate_max, audience: audience.to_string() })
+        Outcome::Ok(Binding {
+            id_commitment,
+            rate_max,
+            audience: audience.to_string(),
+        })
     }
 }
 
@@ -121,7 +130,11 @@ mod tests {
     use serde_json::json;
 
     fn produce(args: Option<Value>) -> ProduceRequest {
-        ProduceRequest { auth_type: "t-a".into(), id_commitment_hex: "01".repeat(32), args }
+        ProduceRequest {
+            auth_type: "t-a".into(),
+            id_commitment_hex: "01".repeat(32),
+            args,
+        }
     }
 
     #[test]
@@ -130,30 +143,58 @@ mod tests {
         assert_eq!(args_object(Some(&json!(null))).unwrap(), None);
         assert_eq!(args_object(Some(&json!(" "))).unwrap(), None);
         assert_eq!(args_object(Some(&json!("null"))).unwrap(), None);
-        let o = args_object(Some(&json!("{\"private_key\":\"0x01\"}"))).unwrap().unwrap();
+        let o = args_object(Some(&json!("{\"private_key\":\"0x01\"}")))
+            .unwrap()
+            .unwrap();
         assert_eq!(o["private_key"], "0x01");
-        assert!(args_object(Some(&json!("[1]"))).unwrap_err().contains("expected JSON object"));
-        assert!(args_object(Some(&json!("{"))).unwrap_err().contains("not valid JSON"));
-        assert!(args_object(Some(&json!(7))).unwrap_err().contains("expected JSON object"));
+        assert!(args_object(Some(&json!("[1]")))
+            .unwrap_err()
+            .contains("expected JSON object"));
+        assert!(args_object(Some(&json!("{")))
+            .unwrap_err()
+            .contains("not valid JSON"));
+        assert!(args_object(Some(&json!(7)))
+            .unwrap_err()
+            .contains("expected JSON object"));
     }
 
     #[test]
     fn produce_binding_defaults_and_overrides() {
         let b = Binding::from_produce(&produce(None)).unwrap();
-        assert_eq!((b.id_commitment, b.rate_max, b.audience.as_str()), ([1u8; 32], 100, ""));
-        let b = Binding::from_produce(&produce(Some(json!({ "rate_max": 7, "audience": "poc" })))).unwrap();
+        assert_eq!(
+            (b.id_commitment, b.rate_max, b.audience.as_str()),
+            ([1u8; 32], 100, "")
+        );
+        let b = Binding::from_produce(&produce(Some(json!({ "rate_max": 7, "audience": "poc" }))))
+            .unwrap();
         assert_eq!((b.rate_max, b.audience.as_str()), (7, "poc"));
         let b = Binding::from_produce(&produce(Some(json!("{\"rate_max\": \"9\"}")))).unwrap();
         assert_eq!(b.rate_max, 9, "a numeric string counts");
-        for bad in [json!({ "rate_max": -1 }), json!({ "rate_max": "x" }), json!({ "rate_max": true })] {
-            assert!(Binding::from_produce(&produce(Some(bad))).unwrap_err().starts_with("rate_max"));
+        for bad in [
+            json!({ "rate_max": -1 }),
+            json!({ "rate_max": "x" }),
+            json!({ "rate_max": true }),
+        ] {
+            assert!(Binding::from_produce(&produce(Some(bad)))
+                .unwrap_err()
+                .starts_with("rate_max"));
         }
-        assert!(Binding::from_produce(&produce(Some(json!({ "audience": 1 })))).unwrap_err().starts_with("audience"));
-        assert!(Binding::from_produce(&produce(Some(json!({ "audience": "x".repeat(256) })))).is_err());
-        assert!(Binding::from_produce(&produce(Some(json!({ "audience": "x".repeat(255) })))).is_ok());
+        assert!(
+            Binding::from_produce(&produce(Some(json!({ "audience": 1 }))))
+                .unwrap_err()
+                .starts_with("audience")
+        );
+        assert!(
+            Binding::from_produce(&produce(Some(json!({ "audience": "x".repeat(256) })))).is_err()
+        );
+        assert!(
+            Binding::from_produce(&produce(Some(json!({ "audience": "x".repeat(255) })))).is_ok()
+        );
         let mut short = produce(None);
         short.id_commitment_hex = "01".repeat(31);
-        assert!(Binding::from_produce(&short).unwrap_err().starts_with("id_commitment_hex"));
+        assert!(Binding::from_produce(&short)
+            .unwrap_err()
+            .starts_with("id_commitment_hex"));
     }
 
     #[test]
@@ -166,20 +207,33 @@ mod tests {
             config: None,
             peer_id: None,
         };
-        let Outcome::Ok(b) = Binding::for_verify(&req, 5, "aud") else { panic!() };
-        assert_eq!((b.id_commitment, b.rate_max, b.audience.as_str()), ([0xab; 32], 5, "aud"));
+        let Outcome::Ok(b) = Binding::for_verify(&req, 5, "aud") else {
+            panic!()
+        };
+        assert_eq!(
+            (b.id_commitment, b.rate_max, b.audience.as_str()),
+            ([0xab; 32], 5, "aud")
+        );
         req.id_commitment_hex = "ab".repeat(31);
-        let Outcome::Reject(r) = Binding::for_verify(&req, 5, "") else { panic!() };
+        let Outcome::Reject(r) = Binding::for_verify(&req, 5, "") else {
+            panic!()
+        };
         assert_eq!(r, "id_commitment must be 32 bytes, got 31");
         req.id_commitment_hex = "zz".repeat(32);
-        assert!(matches!(Binding::for_verify(&req, 5, ""), Outcome::Reject(r) if r.starts_with("id_commitment hex:")));
+        assert!(
+            matches!(Binding::for_verify(&req, 5, ""), Outcome::Reject(r) if r.starts_with("id_commitment hex:"))
+        );
     }
 
     #[test]
     fn digest_known_answer() {
         // idc 0x01..0x20, rate_max 100, audience "", no extra, type lez-allowlist.
         let idc: [u8; 32] = core::array::from_fn(|i| i as u8 + 1);
-        let b = Binding { id_commitment: idc, rate_max: 100, audience: String::new() };
+        let b = Binding {
+            id_commitment: idc,
+            rate_max: 100,
+            audience: String::new(),
+        };
         let d = binding_digest(&AuthType::new("lez", "allowlist"), &b, &[]);
         let mut h = Sha256::new();
         h.update(b"logos/rln/lez-allowlist/2");
@@ -188,11 +242,26 @@ mod tests {
         h.update([0u8]);
         let by_hand: [u8; 32] = h.finalize().into();
         assert_eq!(d, by_hand);
-        assert_eq!(hex::encode(d), "cefb1945e8502986bb4fc29a949124fb9ee7983f3d10f0fbb7895ec36db87ac1");
+        assert_eq!(
+            hex::encode(d),
+            "cefb1945e8502986bb4fc29a949124fb9ee7983f3d10f0fbb7895ec36db87ac1"
+        );
         // Every field moves the digest.
-        let b2 = Binding { audience: "x".into(), ..b.clone() };
-        assert_ne!(binding_digest(&AuthType::new("lez", "allowlist"), &b2, &[]), d);
-        assert_ne!(binding_digest(&AuthType::new("lez", "allowlist"), &b, &[1]), d);
-        assert_ne!(binding_digest(&AuthType::new("logos", "allowlist"), &b, &[]), d);
+        let b2 = Binding {
+            audience: "x".into(),
+            ..b.clone()
+        };
+        assert_ne!(
+            binding_digest(&AuthType::new("lez", "allowlist"), &b2, &[]),
+            d
+        );
+        assert_ne!(
+            binding_digest(&AuthType::new("lez", "allowlist"), &b, &[1]),
+            d
+        );
+        assert_ne!(
+            binding_digest(&AuthType::new("logos", "allowlist"), &b, &[]),
+            d
+        );
     }
 }

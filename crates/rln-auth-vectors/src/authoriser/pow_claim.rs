@@ -7,7 +7,9 @@ use std::any::Any;
 
 use pow_claim::verify::{check, Config};
 use pow_claim::{Claim, Evidence as ClaimEvidence, HttpNode};
-use rln_auth_vector::{downcast_identity, Authoriser, Cfg, Check, Evidence, Identity, Outcome, Scheme};
+use rln_auth_vector::{
+    downcast_identity, Authoriser, Cfg, Check, Evidence, Identity, Outcome, Scheme,
+};
 use serde_json::Value;
 
 use crate::scheme::logos::{LogosKey, NAME as LOGOS};
@@ -30,7 +32,9 @@ impl Authoriser for PowClaim {
         Ok(Box::new(Config::parse(raw)?))
     }
     fn audience<'a>(&self, cfg: &'a dyn Any) -> &'a str {
-        cfg.downcast_ref::<Config>().map(|c| c.audience.as_str()).unwrap_or("")
+        cfg.downcast_ref::<Config>()
+            .map(|c| c.audience.as_str())
+            .unwrap_or("")
     }
     fn decode_evidence<'a>(&self, rest: &'a [u8]) -> Outcome<(Evidence, &'a [u8])> {
         match ClaimEvidence::decode(rest) {
@@ -39,19 +43,34 @@ impl Authoriser for PowClaim {
         }
     }
     fn extra(&self, ev: &dyn Any) -> Vec<u8> {
-        ev.downcast_ref::<ClaimEvidence>().map(|e| e.pow_nullifier.to_vec()).unwrap_or_default()
+        ev.downcast_ref::<ClaimEvidence>()
+            .map(|e| e.pow_nullifier.to_vec())
+            .unwrap_or_default()
     }
     fn authorise(&self, cfg: &dyn Any, id: &dyn Identity, ev: &dyn Any) -> Check<()> {
-        let cfg = cfg.downcast_ref::<Config>().ok_or("pow-claim: config is not a pow-claim config")?;
-        let ev = ev.downcast_ref::<ClaimEvidence>().ok_or("pow-claim: evidence is not a claim locator")?;
-        let key = downcast_identity::<LogosKey>(id).ok_or("pow-claim: identity is not a logos key")?;
+        let cfg = cfg
+            .downcast_ref::<Config>()
+            .ok_or("pow-claim: config is not a pow-claim config")?;
+        let ev = ev
+            .downcast_ref::<ClaimEvidence>()
+            .ok_or("pow-claim: evidence is not a claim locator")?;
+        let key =
+            downcast_identity::<LogosKey>(id).ok_or("pow-claim: identity is not a logos key")?;
         let k = rln_auth_vector::hex32_bytes("k", &key.0)?;
         if ev.spend.is_some() {
             return Ok(Outcome::Reject(
-                if cfg.allow_spend_locator { "spend locator unsupported in this PoC" } else { "spend locator disallowed by config" }.into(),
+                if cfg.allow_spend_locator {
+                    "spend locator unsupported in this PoC"
+                } else {
+                    "spend locator disallowed by config"
+                }
+                .into(),
             ));
         }
-        let claim = Claim { k, evidence: ev.clone() };
+        let claim = Claim {
+            k,
+            evidence: ev.clone(),
+        };
         let node = HttpNode::new(&cfg.node_url, cfg.http_timeout_ms);
         let c = check(&[&node], &claim, cfg)?;
         Ok(match c.outcome {
@@ -60,6 +79,8 @@ impl Authoriser for PowClaim {
         })
     }
     fn nullifier(&self, id: &dyn Identity, ev: &dyn Any) -> String {
-        ev.downcast_ref::<ClaimEvidence>().map(|e| hex::encode(e.pow_nullifier)).unwrap_or_else(|| id.canonical())
+        ev.downcast_ref::<ClaimEvidence>()
+            .map(|e| hex::encode(e.pow_nullifier))
+            .unwrap_or_else(|| id.canonical())
     }
 }

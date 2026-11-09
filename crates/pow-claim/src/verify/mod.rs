@@ -40,6 +40,11 @@ pub fn check(nodes: &[&dyn NodeApi], claim: &Claim, cfg: &Config) -> Result<Clai
         Ok(c) => Ok(c.outcome.clone().map(|_| ())),
         Err(e) => Err(e.clone()),
     };
-    audit::record(cfg.audit_log.as_deref(), &rec, &verdict, t0.elapsed().as_millis());
+    audit::record(
+        cfg.audit_log.as_deref(),
+        &rec,
+        &verdict,
+        t0.elapsed().as_millis(),
+    );
     r
 }

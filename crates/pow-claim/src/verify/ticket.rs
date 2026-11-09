@@ -4,10 +4,10 @@
 //! Op JSON (opcode 64): `{"epoch_nonce": hex LE Fr, "block_hash": [32 ints] | hex,
 //! "public_key": hex LE Fr}`.
 
+use crate::ownership::bytes32;
 use ark_ff::{BigInteger as _, PrimeField as _};
 use blake2::{digest::consts::U32, Blake2b, Digest as _};
 use logos_blockchain_poseidon2::{Digest as _, Fr, Poseidon2Bn254Hasher};
-use crate::ownership::bytes32;
 use serde_json::Value;
 
 pub const OPCODE_CLAIM_POW_REWARD: u64 = 64;

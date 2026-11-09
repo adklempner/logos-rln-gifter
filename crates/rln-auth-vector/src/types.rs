@@ -63,10 +63,18 @@ pub struct Verdict {
 
 impl Verdict {
     pub fn accept(nullifier: Option<String>) -> Self {
-        Verdict { ok: true, reason: None, nullifier }
+        Verdict {
+            ok: true,
+            reason: None,
+            nullifier,
+        }
     }
     pub fn reject(reason: impl Into<String>) -> Self {
-        Verdict { ok: false, reason: Some(reason.into()), nullifier: None }
+        Verdict {
+            ok: false,
+            reason: Some(reason.into()),
+            nullifier: None,
+        }
     }
 }
 
@@ -111,7 +119,10 @@ mod tests {
         assert_eq!(parse_produce_reply(&err).unwrap_err(), "boom");
 
         let verdict = serde_json::json!({ "ok": true, "nullifier": "n" });
-        assert_eq!(parse_verdict(&verdict).unwrap().nullifier.as_deref(), Some("n"));
+        assert_eq!(
+            parse_verdict(&verdict).unwrap().nullifier.as_deref(),
+            Some("n")
+        );
         assert_eq!(parse_verdict(&err).unwrap_err(), "boom");
     }
 
@@ -141,6 +152,9 @@ mod tests {
 
     #[test]
     fn nullifiers_are_namespaced_by_registry_and_auth_type() {
-        assert_eq!(namespaced_nullifier("cfg1", "eth-allowlist", "0xab"), "cfg1:eth-allowlist:0xab");
+        assert_eq!(
+            namespaced_nullifier("cfg1", "eth-allowlist", "0xab"),
+            "cfg1:eth-allowlist:0xab"
+        );
     }
 }

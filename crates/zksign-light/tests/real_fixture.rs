@@ -17,7 +17,8 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pow_claim_real_meta.json");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/pow_claim_real_meta.json");
     let m: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let s = |k: &str| m[k].as_str().unwrap().to_string();
     let payload = hex::decode(s("payload_hex")).unwrap();
@@ -34,7 +35,11 @@ fn fixture() -> Fixture {
     h.update(hex32_bytes("idc", &s("id_commitment_hex")).unwrap());
     h.update(m["rate_max"].as_u64().unwrap().to_le_bytes());
     h.update(hex32_bytes("nul", &s("pow_nullifier")).unwrap());
-    Fixture { k: hex32_bytes("k", &s("k")).unwrap(), digest: h.finalize().into(), zksig }
+    Fixture {
+        k: hex32_bytes("k", &s("k")).unwrap(),
+        digest: h.finalize().into(),
+        zksig,
+    }
 }
 
 #[test]
@@ -50,7 +55,12 @@ fn real_signature_accepts() {
 fn flipped_proof_parts_reject() {
     let f = fixture();
     let vk = default_vk().unwrap();
-    for (part, off) in [("pi_a", 0usize), ("pi_b", 32), ("pi_b hi", 95), ("pi_c", 96)] {
+    for (part, off) in [
+        ("pi_a", 0usize),
+        ("pi_b", 32),
+        ("pi_b hi", 95),
+        ("pi_c", 96),
+    ] {
         let mut z = f.zksig;
         z[off] ^= 0x01;
         let e = verify_sig(vk, &f.k, &f.digest, &z).unwrap_err();
@@ -67,7 +77,10 @@ fn other_key_or_digest_rejects() {
     assert!(verify_sig(vk, &k, &f.digest, &f.zksig).is_err());
     let mut rev = f.k;
     rev.reverse();
-    assert!(verify_sig(vk, &rev, &f.digest, &f.zksig).is_err(), "byte-reversed K must not verify");
+    assert!(
+        verify_sig(vk, &rev, &f.digest, &f.zksig).is_err(),
+        "byte-reversed K must not verify"
+    );
     let mut d = f.digest;
     d[31] ^= 0x01;
     assert!(verify_sig(vk, &f.k, &d, &f.zksig).is_err());
@@ -92,7 +105,10 @@ fn vk_with_the_wrong_public_input_count_is_an_error() {
     ic.pop();
     vk["nPublic"] = serde_json::json!(32);
     let e = PreparedVk::from_json(&vk.to_string()).err().unwrap();
-    assert!(e.contains("zkSign vk shape") && e.contains("33 public inputs"), "{e}");
+    assert!(
+        e.contains("zkSign vk shape") && e.contains("33 public inputs"),
+        "{e}"
+    );
 }
 
 #[test]

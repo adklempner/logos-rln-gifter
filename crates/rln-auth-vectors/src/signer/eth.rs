@@ -25,7 +25,12 @@ impl Signer for EthSigner {
         NAME
     }
     /// `r ‖ s ‖ recid` (recid 0/1); the binding digest is NOT what is signed.
-    fn sign(&self, b: &Binding, _digest: &[u8; 32], args: Option<&Value>) -> Result<Vec<u8>, String> {
+    fn sign(
+        &self,
+        b: &Binding,
+        _digest: &[u8; 32],
+        args: Option<&Value>,
+    ) -> Result<Vec<u8>, String> {
         let key = self.key(args)?;
         let (sig, recid) = key
             .sign_prehash_recoverable(&eip191_digest(&b.id_commitment))
@@ -35,7 +40,9 @@ impl Signer for EthSigner {
         Ok(out)
     }
     fn identity(&self, args: Option<&Value>) -> Result<Box<dyn Identity>, String> {
-        Ok(Box::new(EthAddress(address_of(self.key(args)?.verifying_key()))))
+        Ok(Box::new(EthAddress(address_of(
+            self.key(args)?.verifying_key(),
+        ))))
     }
 }
 
@@ -48,9 +55,17 @@ mod tests {
     #[test]
     fn matches_foundry_cast_vector() {
         let s = EthSigner(Box::new(StaticKey(PK42)));
-        let b = Binding { id_commitment: idc(), rate_max: 100, audience: String::new() };
+        let b = Binding {
+            id_commitment: idc(),
+            rate_max: 100,
+            audience: String::new(),
+        };
         let ours = s.sign(&b, &[0; 32], None).unwrap();
-        assert_eq!(hex::encode(&ours[..64]), &CAST_SIG[..128], "r||s differs from cast");
+        assert_eq!(
+            hex::encode(&ours[..64]),
+            &CAST_SIG[..128],
+            "r||s differs from cast"
+        );
         let v = u8::from_str_radix(&CAST_SIG[128..], 16).unwrap();
         assert_eq!(ours[64], v - 27);
         assert_eq!(s.identity(None).unwrap().canonical(), ADDR42);

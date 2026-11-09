@@ -81,7 +81,9 @@ pub fn normalize_address(entry: &str) -> Result<String, String> {
     let t = entry.trim().to_ascii_lowercase();
     let h = t.strip_prefix("0x").unwrap_or(&t);
     if h.len() != 40 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(format!("config.allowlist entry {entry:?}: expected a 0x address (40 hex chars)"));
+        return Err(format!(
+            "config.allowlist entry {entry:?}: expected a 0x address (40 hex chars)"
+        ));
     }
     Ok(format!("0x{h}"))
 }
@@ -101,12 +103,26 @@ impl Scheme for Eth {
     }
     fn decode<'a>(&self, body: &'a [u8]) -> Outcome<Decoded<'a>> {
         if body.len() < PART_LEN {
-            return Outcome::Reject(format!("eth part must be 65 bytes (r||s||recid), got {}", body.len()));
+            return Outcome::Reject(format!(
+                "eth part must be 65 bytes (r||s||recid), got {}",
+                body.len()
+            ));
         }
         let (part, rest) = body.split_at(PART_LEN);
-        Outcome::Ok(Decoded { claimed: None, part, rest })
+        Outcome::Ok(Decoded {
+            claimed: None,
+            part,
+            rest,
+        })
     }
-    fn verify(&self, _cfg: &dyn Any, b: &Binding, _digest: &[u8; 32], d: &Decoded<'_>, _t: &Transport<'_>) -> Check<Box<dyn Identity>> {
+    fn verify(
+        &self,
+        _cfg: &dyn Any,
+        b: &Binding,
+        _digest: &[u8; 32],
+        d: &Decoded<'_>,
+        _t: &Transport<'_>,
+    ) -> Check<Box<dyn Identity>> {
         Ok(match recover_signer(&b.id_commitment, d.part) {
             Ok(addr) => Outcome::Ok(Box::new(EthAddress(addr))),
             Err(e) => Outcome::Reject(reason::sig_failed(e)),
@@ -146,14 +162,22 @@ pub(crate) mod tests {
         for offset in [0u8, 27] {
             let mut p = sig.to_bytes().to_vec();
             p.push(recid.to_byte() + offset);
-            assert_eq!(recover_signer(&[0x11; 32], &p).unwrap(), ADDR42, "offset {offset}");
+            assert_eq!(
+                recover_signer(&[0x11; 32], &p).unwrap(),
+                ADDR42,
+                "offset {offset}"
+            );
         }
         let (r, s) = sig.split_scalars();
         let high = Signature::from_scalars(r, -*s).unwrap();
         let mut p = high.to_bytes().to_vec();
         p.push(recid.to_byte() ^ 1);
-        assert!(recover_signer(&[0x11; 32], &p).unwrap_err().contains("high-S"));
-        assert!(recover_signer(&[0x11; 32], &p[..64]).unwrap_err().contains("65 bytes"));
+        assert!(recover_signer(&[0x11; 32], &p)
+            .unwrap_err()
+            .contains("high-S"));
+        assert!(recover_signer(&[0x11; 32], &p[..64])
+            .unwrap_err()
+            .contains("65 bytes"));
     }
 
     #[test]
@@ -161,9 +185,19 @@ pub(crate) mod tests {
         let up = ADDR42.to_uppercase().replace("0X", "0x");
         assert_eq!(normalize_address(&up).unwrap(), ADDR42);
         assert_eq!(normalize_address(&ADDR42[2..]).unwrap(), ADDR42);
-        assert_eq!(normalize_address(&format!("  {} ", ADDR42.to_uppercase())).unwrap(), ADDR42);
-        for bad in ["0x1234", "not-an-address", &format!("{ADDR42}00"), &format!("0x0x{}", &ADDR42[4..])] {
-            assert!(normalize_address(bad).unwrap_err().contains(&format!("{bad:?}")));
+        assert_eq!(
+            normalize_address(&format!("  {} ", ADDR42.to_uppercase())).unwrap(),
+            ADDR42
+        );
+        for bad in [
+            "0x1234",
+            "not-an-address",
+            &format!("{ADDR42}00"),
+            &format!("0x0x{}", &ADDR42[4..]),
+        ] {
+            assert!(normalize_address(bad)
+                .unwrap_err()
+                .contains(&format!("{bad:?}")));
         }
     }
 }

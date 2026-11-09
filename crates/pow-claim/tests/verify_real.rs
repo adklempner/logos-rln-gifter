@@ -43,7 +43,11 @@ fn claim() -> Claim {
     let m = meta();
     Claim {
         k: arr(&m["k"]),
-        evidence: Evidence { claim_block_id: arr(&m["claim_block_id"]), pow_nullifier: arr(&m["pow_nullifier"]), spend: None },
+        evidence: Evidence {
+            claim_block_id: arr(&m["claim_block_id"]),
+            pow_nullifier: arr(&m["pow_nullifier"]),
+            spend: None,
+        },
     }
 }
 
@@ -63,8 +67,13 @@ fn run(n: &FakeNode) -> Result<Result<(), String>, String> {
 #[track_caller]
 fn assert_reject(v: Result<Result<(), String>, String>, needle: &str) {
     let v = v.unwrap_or_else(|e| panic!("expected reject containing {needle:?}, got Err {e}"));
-    let r = v.expect_err(&format!("expected reject containing {needle:?}, got accept"));
-    assert!(r.to_lowercase().contains(needle), "reason {r:?} lacks {needle:?}");
+    let r = v.expect_err(&format!(
+        "expected reject containing {needle:?}, got accept"
+    ));
+    assert!(
+        r.to_lowercase().contains(needle),
+        "reason {r:?} lacks {needle:?}"
+    );
 }
 
 fn block_mut(n: &mut FakeNode) -> &mut Value {
@@ -92,7 +101,10 @@ fn known_answer_ticket_accepts_hex_block_hash() {
     let mut p = op64(&n)["payload"].clone();
     let bh = pow_claim::ownership::bytes32(&p["block_hash"], "bh").unwrap();
     p["block_hash"] = json!(hex::encode(bh));
-    assert_eq!(hex::encode(pow_claim::verify::puzzle_ticket(&p).unwrap()), NUL);
+    assert_eq!(
+        hex::encode(pow_claim::verify::puzzle_ticket(&p).unwrap()),
+        NUL
+    );
 }
 
 #[test]
@@ -126,8 +138,14 @@ fn real_accepts_via_spent_to_and_records_the_decision() {
     assert_eq!(c.outcome, Ok(pow_claim::Path::SpentTo));
     assert_eq!(c.lib_slot, Some(13112244));
     assert!(n.ranges.borrow().contains(&(SLOT, SLOT)));
-    let line: Value =
-        serde_json::from_str(std::fs::read_to_string(&log).unwrap().lines().last().unwrap()).unwrap();
+    let line: Value = serde_json::from_str(
+        std::fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .last()
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(line["verdict"], "accept");
     assert_eq!(line["path"], "spent_to");
     assert_eq!(line["nullifier"], NUL);
@@ -238,7 +256,9 @@ fn reject_other_key() {
 
 #[test]
 fn err_no_node_url() {
-    assert!(Config::parse(Some(&json!({"audience": "poc"}))).unwrap_err().contains("node_url"));
+    assert!(Config::parse(Some(&json!({"audience": "poc"})))
+        .unwrap_err()
+        .contains("node_url"));
     assert!(Config::parse(None).unwrap_err().contains("node_url"));
 }
 
@@ -258,7 +278,9 @@ fn err_info_without_lib_slot() {
 #[test]
 fn err_no_node_configured() {
     let cfg = Config::parse(Some(&base_cfg())).unwrap();
-    assert!(check_claim(&[], &claim(), &cfg).unwrap_err().contains("no node"));
+    assert!(check_claim(&[], &claim(), &cfg)
+        .unwrap_err()
+        .contains("no node"));
 }
 
 #[test]

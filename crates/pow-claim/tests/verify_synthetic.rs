@@ -1,8 +1,8 @@
 //! Synthetic chain (no signature): path A (`utxo.note.pk == K`) at the
 //! `check_claim` layer, and `allow_direct_ownership = false`.
 
-use pow_claim::{node::testing::FakeNode, ownership::Path, Claim, Evidence};
 use pow_claim::verify::{check_claim, ticket::ClaimOp, Config};
+use pow_claim::{node::testing::FakeNode, ownership::Path, Claim, Evidence};
 use serde_json::{json, Value};
 
 const BID: &str = "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1";
@@ -17,7 +17,11 @@ fn k() -> [u8; 32] {
 
 /// A self-consistent claim block where the reward note pays `K` directly.
 fn setup() -> (FakeNode, Claim) {
-    let op = ClaimOp { epoch_nonce: [5; 32], block_hash: [7; 32], public_key: k() };
+    let op = ClaimOp {
+        epoch_nonce: [5; 32],
+        block_hash: [7; 32],
+        public_key: k(),
+    };
     let ticket = op.puzzle_ticket();
     let op_id: Vec<u8> = op.op_id().to_vec();
     let block = json!({
@@ -32,11 +36,21 @@ fn setup() -> (FakeNode, Claim) {
         "pow_nullifier": hex::encode(ticket),
         "utxo": {"op_id": op_id, "output_index": 0, "note": {"value": 1000, "pk": hex::encode(k())}},
     }}}});
-    let mut n = FakeNode { info: json!({"cryptarchia_info": {"lib_slot": SLOT + 10}}), ..Default::default() };
+    let mut n = FakeNode {
+        info: json!({"cryptarchia_info": {"lib_slot": SLOT + 10}}),
+        ..Default::default()
+    };
     n.add_block(block, vec![ev], true);
     let mut bid = [0u8; 32];
     hex::decode_to_slice(BID, &mut bid).unwrap();
-    let p = Claim { k: k(), evidence: Evidence { claim_block_id: bid, pow_nullifier: ticket, spend: None } };
+    let p = Claim {
+        k: k(),
+        evidence: Evidence {
+            claim_block_id: bid,
+            pow_nullifier: ticket,
+            spend: None,
+        },
+    };
     (n, p)
 }
 
@@ -85,7 +99,9 @@ fn other_k_rejects() {
 fn node_count_checks() {
     let (n, p) = setup();
     assert!(check_claim(&[], &p, &cfg(json!({}))).is_err());
-    assert!(check_claim(&[&n, &n], &p, &cfg(json!({}))).unwrap_err().contains("unsupported"));
+    assert!(check_claim(&[&n, &n], &p, &cfg(json!({})))
+        .unwrap_err()
+        .contains("unsupported"));
 }
 
 #[test]
@@ -99,7 +115,8 @@ fn garbage_chain_json_never_panics() {
     ]}}]);
     let c = check_claim(&[&n], &p, &cfg(json!({}))).unwrap();
     assert!(c.outcome.unwrap_err().contains("ticket"));
-    n.events.insert(BID.into(), vec![json!(null), json!({"Tx": 3})]);
+    n.events
+        .insert(BID.into(), vec![json!(null), json!({"Tx": 3})]);
     let c = check_claim(&[&n], &p, &cfg(json!({}))).unwrap();
     assert!(c.outcome.is_err());
 }

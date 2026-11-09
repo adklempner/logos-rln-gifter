@@ -89,7 +89,9 @@ impl Config {
             .filter(|s| !s.is_empty())
             .ok_or("config.node_url is required")?;
         if !(node_url.starts_with("http://") || node_url.starts_with("https://")) {
-            return Err(format!("config.node_url: expected http(s):// URL, got {node_url:?}"));
+            return Err(format!(
+                "config.node_url: expected http(s):// URL, got {node_url:?}"
+            ));
         }
         let node_urls = match o.get("node_urls") {
             None | Some(Value::Null) => Vec::new(),
@@ -116,7 +118,11 @@ impl Config {
             node_urls,
             audience,
             min_payout: opt_u64(o, "min_payout", d.min_payout)?,
-            allow_direct_ownership: opt_bool(o, "allow_direct_ownership", d.allow_direct_ownership)?,
+            allow_direct_ownership: opt_bool(
+                o,
+                "allow_direct_ownership",
+                d.allow_direct_ownership,
+            )?,
             allow_spend_locator: opt_bool(o, "allow_spend_locator", d.allow_spend_locator)?,
             http_timeout_ms,
             zksign_vk_path: opt_str(o, "zksign_vk_path")?.filter(|s| !s.is_empty()),
@@ -139,7 +145,9 @@ mod tests {
         assert!(c.allow_direct_ownership && c.allow_spend_locator);
         assert_eq!(c.http_timeout_ms, 5000);
         assert!(Config::parse(None).unwrap_err().contains("node_url"));
-        assert!(Config::parse(Some(&json!({}))).unwrap_err().contains("node_url"));
+        assert!(Config::parse(Some(&json!({})))
+            .unwrap_err()
+            .contains("node_url"));
         assert!(Config::parse(Some(&json!({"node_url": 5}))).is_err());
     }
 
@@ -162,8 +170,10 @@ mod tests {
         let a256 = "a".repeat(256);
         let e = Config::parse(Some(&json!({"node_url":"http://x:1","audience":a256}))).unwrap_err();
         assert!(e.contains("255"), "{e}");
-        let e = Config::parse(Some(&json!({"node_url":"http://x:1","node_urls":["http://y:1"]})))
-            .unwrap_err();
+        let e = Config::parse(Some(
+            &json!({"node_url":"http://x:1","node_urls":["http://y:1"]}),
+        ))
+        .unwrap_err();
         assert!(e.contains("unsupported"), "{e}");
     }
 }

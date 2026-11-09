@@ -23,9 +23,14 @@ pub fn sha256(parts: &[&[u8]]) -> [u8; 32] {
 pub fn ecdh_generate(card_pub_bytes: &[u8]) -> Result<([u8; 32], Vec<u8>), String> {
     let mut rng = rand::thread_rng();
     let eph = SecretKey::random(&mut rng);
-    let card_pub = PublicKey::from_sec1_bytes(card_pub_bytes).map_err(|e| format!("card pubkey: {e}"))?;
+    let card_pub =
+        PublicKey::from_sec1_bytes(card_pub_bytes).map_err(|e| format!("card pubkey: {e}"))?;
     let shared = diffie_hellman(eph.to_nonzero_scalar(), card_pub.as_affine());
-    let secret: [u8; 32] = shared.raw_secret_bytes().as_slice().try_into().map_err(|_| "ecdh len")?;
+    let secret: [u8; 32] = shared
+        .raw_secret_bytes()
+        .as_slice()
+        .try_into()
+        .map_err(|_| "ecdh len")?;
     let eph_pub = eph.public_key().to_encoded_point(false).as_bytes().to_vec();
     Ok((secret, eph_pub))
 }
@@ -38,7 +43,11 @@ pub fn pairing_secret_hash(pairing_pass: &str) -> [u8; 32] {
     pbkdf2_hmac_array::<Sha256, 32>(&nfkd(pairing_pass), &nfkd(PAIRING_TOKEN_SALT), 50000)
 }
 
-pub fn derive_session_keys(secret: &[u8], pairing_key: &[u8], card_data: &[u8]) -> ([u8; 32], [u8; 32], [u8; 16]) {
+pub fn derive_session_keys(
+    secret: &[u8],
+    pairing_key: &[u8],
+    card_data: &[u8],
+) -> ([u8; 32], [u8; 32], [u8; 16]) {
     let salt = &card_data[..32];
     let iv: [u8; 16] = card_data[32..48].try_into().unwrap();
     let mut h = Sha512::new();
@@ -83,7 +92,8 @@ fn cbc_encrypt_raw(cipher: &Aes256, iv: &[u8], data: &[u8]) -> Vec<u8> {
     let mut prev = [0u8; 16];
     prev.copy_from_slice(iv);
     for chunk in data.chunks(16) {
-        let mut b = aes::cipher::generic_array::GenericArray::clone_from_slice(&xor16(chunk, &prev));
+        let mut b =
+            aes::cipher::generic_array::GenericArray::clone_from_slice(&xor16(chunk, &prev));
         cipher.encrypt_block(&mut b);
         prev.copy_from_slice(&b);
         out.extend_from_slice(&b);

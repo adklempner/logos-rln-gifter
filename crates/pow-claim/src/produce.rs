@@ -12,7 +12,10 @@ use crate::{
 pub fn gather(node: &dyn NodeApi, args: &ProduceArgs) -> Result<Claim, String> {
     let found = discover(node, args)?;
     let spend = match (&args.spend_block_id, &args.spend_tx_hash) {
-        (Some(b), Some(t)) => Some((hex32_bytes("spend_block_id", b)?, hex32_bytes("spend_tx_hash", t)?)),
+        (Some(b), Some(t)) => Some((
+            hex32_bytes("spend_block_id", b)?,
+            hex32_bytes("spend_tx_hash", t)?,
+        )),
         (None, None) => None,
         _ => return Err("spend_block_id and spend_tx_hash must be given together".into()),
     };

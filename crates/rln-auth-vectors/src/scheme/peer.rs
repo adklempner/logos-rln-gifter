@@ -9,9 +9,9 @@
 use std::any::Any;
 
 use base58::FromBase58;
-use rln_auth_vector::{strip_0x, Identity};
 #[cfg(feature = "verify")]
 use rln_auth_vector::{reason, Binding, Check, Decoded, Outcome, Scheme, Transport};
+use rln_auth_vector::{strip_0x, Identity};
 
 pub const NAME: &str = "peer";
 
@@ -36,12 +36,16 @@ pub fn parse_peer_id(s: &str) -> Result<String, String> {
     let bytes = if !h.is_empty() && h.len() % 2 == 0 && h.bytes().all(|b| b.is_ascii_hexdigit()) {
         hex::decode(h).map_err(|e| format!("peer id '{s}': {e}"))?
     } else {
-        s.from_base58().map_err(|e| format!("peer id '{s}': neither hex nor base58 ({e:?})"))?
+        s.from_base58()
+            .map_err(|e| format!("peer id '{s}': neither hex nor base58 ({e:?})"))?
     };
     // A multihash with one-byte code and length varints (every libp2p
     // identity key kind: identity/ed25519 38 bytes, sha256/secp256k1 34).
     if bytes.len() < 3 || bytes[1] as usize != bytes.len() - 2 {
-        return Err(format!("peer id '{s}': {} bytes is not a multihash", bytes.len()));
+        return Err(format!(
+            "peer id '{s}': {} bytes is not a multihash",
+            bytes.len()
+        ));
     }
     Ok(hex::encode(bytes))
 }
@@ -62,9 +66,20 @@ impl Scheme for Peer {
     /// The part is empty: there is nothing to sign with.
     fn decode<'a>(&self, body: &'a [u8]) -> Outcome<Decoded<'a>> {
         let (part, rest) = body.split_at(0);
-        Outcome::Ok(Decoded { claimed: None, part, rest })
+        Outcome::Ok(Decoded {
+            claimed: None,
+            part,
+            rest,
+        })
     }
-    fn verify(&self, _cfg: &dyn Any, _b: &Binding, _digest: &[u8; 32], _d: &Decoded<'_>, t: &Transport<'_>) -> Check<Box<dyn Identity>> {
+    fn verify(
+        &self,
+        _cfg: &dyn Any,
+        _b: &Binding,
+        _digest: &[u8; 32],
+        _d: &Decoded<'_>,
+        t: &Transport<'_>,
+    ) -> Check<Box<dyn Identity>> {
         let Some(raw) = t.peer_id.map(str::trim).filter(|p| !p.is_empty()) else {
             return Err(reason::TRANSPORT_PEER_UNKNOWN.into());
         };
@@ -91,7 +106,10 @@ pub(crate) mod tests {
         let ed = parse_peer_id(ED25519_B58).unwrap();
         assert!(ed.starts_with("00240801"), "{ed}");
         assert_eq!(ed.len(), 76);
-        assert_eq!(parse_peer_id(&format!("0x{}", ed.to_uppercase())).unwrap(), ed);
+        assert_eq!(
+            parse_peer_id(&format!("0x{}", ed.to_uppercase())).unwrap(),
+            ed
+        );
         let secp = parse_peer_id(SECP_B58).unwrap();
         assert!(secp.starts_with("00250802"), "{secp}");
         assert_eq!(secp.len(), 78);
@@ -99,8 +117,12 @@ pub(crate) mod tests {
         assert!(qm.starts_with("1220"), "{qm}");
         assert_eq!(qm.len(), 68);
         assert!(parse_peer_id("").is_err());
-        assert!(parse_peer_id("0x1220").unwrap_err().contains("not a multihash"));
-        assert!(parse_peer_id("not*base58").unwrap_err().contains("neither hex nor base58"));
+        assert!(parse_peer_id("0x1220")
+            .unwrap_err()
+            .contains("not a multihash"));
+        assert!(parse_peer_id("not*base58")
+            .unwrap_err()
+            .contains("neither hex nor base58"));
     }
 
     #[cfg(feature = "verify")]
@@ -111,12 +133,38 @@ pub(crate) mod tests {
             Outcome::Reject(r) => panic!("{r}"),
         };
         assert!(d.part.is_empty() && d.rest == b"tail" && d.claimed.is_none());
-        let b = Binding { id_commitment: [1; 32], rate_max: 1, audience: String::new() };
-        let ok = Peer.verify(&(), &b, &[0; 32], &d, &Transport { peer_id: Some(SECP_B58) }).unwrap();
+        let b = Binding {
+            id_commitment: [1; 32],
+            rate_max: 1,
+            audience: String::new(),
+        };
+        let ok = Peer
+            .verify(
+                &(),
+                &b,
+                &[0; 32],
+                &d,
+                &Transport {
+                    peer_id: Some(SECP_B58),
+                },
+            )
+            .unwrap();
         let Outcome::Ok(id) = ok else { panic!() };
         assert_eq!(id.canonical(), parse_peer_id(SECP_B58).unwrap());
-        let Err(e) = Peer.verify(&(), &b, &[0; 32], &d, &Transport::default()) else { panic!() };
+        let Err(e) = Peer.verify(&(), &b, &[0; 32], &d, &Transport::default()) else {
+            panic!()
+        };
         assert_eq!(e, reason::TRANSPORT_PEER_UNKNOWN);
-        assert!(Peer.verify(&(), &b, &[0; 32], &d, &Transport { peer_id: Some("??") }).is_err());
+        assert!(Peer
+            .verify(
+                &(),
+                &b,
+                &[0; 32],
+                &d,
+                &Transport {
+                    peer_id: Some("??")
+                }
+            )
+            .is_err());
     }
 }

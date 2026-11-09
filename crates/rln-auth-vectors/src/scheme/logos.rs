@@ -33,7 +33,8 @@ pub fn parse_key(s: &str) -> Result<String, String> {
     #[cfg(feature = "verify")]
     {
         let mut le = [0u8; 32];
-        hex::decode_to_slice(&h, &mut le).map_err(|e| format!("config.allowlist entry {s:?}: {e}"))?;
+        hex::decode_to_slice(&h, &mut le)
+            .map_err(|e| format!("config.allowlist entry {s:?}: {e}"))?;
         if !zksign_light::is_canonical_fr(&le) {
             return Err(format!(
                 "config.allowlist entry {s:?}: not a canonical BN254 scalar (big-endian paste?); \
@@ -64,12 +65,26 @@ impl Scheme for Logos {
     }
     fn decode<'a>(&self, body: &'a [u8]) -> Outcome<Decoded<'a>> {
         if body.len() < PART_LEN {
-            return Outcome::Reject(format!("logos part must be 160 bytes (K 32 || zksig 128), got {}", body.len()));
+            return Outcome::Reject(format!(
+                "logos part must be 160 bytes (K 32 || zksig 128), got {}",
+                body.len()
+            ));
         }
         let (part, rest) = body.split_at(PART_LEN);
-        Outcome::Ok(Decoded { claimed: Some(Box::new(LogosKey(hex::encode(&part[..32])))), part, rest })
+        Outcome::Ok(Decoded {
+            claimed: Some(Box::new(LogosKey(hex::encode(&part[..32])))),
+            part,
+            rest,
+        })
     }
-    fn verify(&self, cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>, _t: &Transport<'_>) -> Check<Box<dyn Identity>> {
+    fn verify(
+        &self,
+        cfg: &dyn Any,
+        _b: &Binding,
+        digest: &[u8; 32],
+        d: &Decoded<'_>,
+        _t: &Transport<'_>,
+    ) -> Check<Box<dyn Identity>> {
         let vk = cfg
             .downcast_ref::<zksign_light::VkSource>()
             .ok_or("logos scheme: config is not a VkSource")?;
@@ -96,7 +111,9 @@ mod tests {
         assert_eq!(parse_key(&up).unwrap(), hex::encode(k));
         let mut big = [0xffu8; 32];
         big[0] = 0xff;
-        assert!(parse_key(&hex::encode(big)).unwrap_err().contains("big-endian paste"));
+        assert!(parse_key(&hex::encode(big))
+            .unwrap_err()
+            .contains("big-endian paste"));
         assert!(parse_key("abc").is_err());
     }
 }

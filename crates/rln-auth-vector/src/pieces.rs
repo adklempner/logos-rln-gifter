@@ -84,7 +84,14 @@ pub trait Scheme: Send + Sync {
     /// signs something else, such as eth's EIP-191 message over the bare
     /// commitment, derives it from `b` here; one that signs nothing takes it
     /// from `t`).
-    fn verify(&self, cfg: &dyn Any, b: &Binding, digest: &[u8; 32], d: &Decoded<'_>, t: &Transport<'_>) -> Check<Box<dyn Identity>>;
+    fn verify(
+        &self,
+        cfg: &dyn Any,
+        b: &Binding,
+        digest: &[u8; 32],
+        d: &Decoded<'_>,
+        t: &Transport<'_>,
+    ) -> Check<Box<dyn Identity>>;
 }
 
 /// The produce half of a scheme: holds (or reaches) the key. `args` is the
@@ -92,7 +99,8 @@ pub trait Scheme: Send + Sync {
 pub trait Signer: Send + Sync {
     fn scheme(&self) -> &'static str;
     /// The scheme part for this binding and digest.
-    fn sign(&self, b: &Binding, digest: &[u8; 32], args: Option<&Value>) -> Result<Vec<u8>, String>;
+    fn sign(&self, b: &Binding, digest: &[u8; 32], args: Option<&Value>)
+        -> Result<Vec<u8>, String>;
     /// The identity this signer proves.
     fn identity(&self, args: Option<&Value>) -> Result<Box<dyn Identity>, String>;
 }

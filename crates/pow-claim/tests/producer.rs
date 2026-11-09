@@ -54,7 +54,10 @@ fn node(lib_slot: u64, tip: &str) -> FakeNode {
 fn direct_block(id: u8, slot: u64, nul: u8, pk: &str) -> (Value, Vec<Value>) {
     let tx = h(id ^ 0xf0);
     let u = utxo(id, pk);
-    (block(&h(id), &h(id - 1), slot, vec![(tx.clone(), vec![])]), vec![claim_event(&tx, &h(nul), &u), json!({"Header": {}})])
+    (
+        block(&h(id), &h(id - 1), slot, vec![(tx.clone(), vec![])]),
+        vec![claim_event(&tx, &h(nul), &u), json!({"Header": {}})],
+    )
 }
 
 #[test]
@@ -66,7 +69,10 @@ fn fixtures_full_gather() {
     assert_eq!(c.evidence.claim_block_id, [0xa1; 32]);
     assert_eq!(c.evidence.pow_nullifier, [0x11; 32]);
     assert_eq!(c.evidence.spend, None);
-    assert!(n.last_sign().is_none(), "gathering signs nothing; the logos scheme does");
+    assert!(
+        n.last_sign().is_none(),
+        "gathering signs nothing; the logos scheme does"
+    );
     let e = c.evidence.encode();
     assert_eq!(e.len(), 65);
     let (back, rest) = Evidence::decode(&e).unwrap();
@@ -76,7 +82,10 @@ fn fixtures_full_gather() {
 #[test]
 fn gather_with_spend_locator() {
     let n = FakeNode::from_dir(fixture_dir()).unwrap();
-    let args = ProduceArgs::parse(Some(&json!({"spend_block_id": h(0x55), "spend_tx_hash": h(0x66)}))).unwrap();
+    let args = ProduceArgs::parse(Some(
+        &json!({"spend_block_id": h(0x55), "spend_tx_hash": h(0x66)}),
+    ))
+    .unwrap();
     let c = gather(&n, &args).unwrap();
     assert_eq!(c.evidence.encode().len(), 129);
     assert_eq!(c.evidence.spend, Some(([0x55; 32], [0x66; 32])));
@@ -124,7 +133,11 @@ fn not_owned_is_not_found() {
 fn newest_first_and_excluded_skipped() {
     let mut n = node(1000, &h(0x30));
     // Old block in an earlier 100-slot chunk, newer ones in the latest chunk.
-    for (id, slot, nul) in [(0x10u8, 850u64, 0x01u8), (0x20, 950, 0x02), (0x30, 990, 0x03)] {
+    for (id, slot, nul) in [
+        (0x10u8, 850u64, 0x01u8),
+        (0x20, 950, 0x02),
+        (0x30, 990, 0x03),
+    ] {
         let (b, ev) = direct_block(id, slot, nul, K);
         n.add_block(b, ev, true);
     }
@@ -132,12 +145,16 @@ fn newest_first_and_excluded_skipped() {
     assert_eq!(f.block_id, h(0x30));
     assert_eq!(n.ranges.borrow()[0], (901, 1000));
 
-    let args = ProduceArgs::parse(Some(&json!({"exclude_nullifiers": [h(0x03), h(0x02)]}))).unwrap();
+    let args =
+        ProduceArgs::parse(Some(&json!({"exclude_nullifiers": [h(0x03), h(0x02)]}))).unwrap();
     let f = discover(&n, &args).unwrap();
     assert_eq!(f.block_id, h(0x10));
     assert_eq!(f.nullifier, h(0x01));
 
-    let all = ProduceArgs::parse(Some(&json!({"exclude_nullifiers": [h(0x03), h(0x02), h(0x01)]}))).unwrap();
+    let all = ProduceArgs::parse(Some(
+        &json!({"exclude_nullifiers": [h(0x03), h(0x02), h(0x01)]}),
+    ))
+    .unwrap();
     assert!(discover(&n, &all).is_err());
 }
 
@@ -169,7 +186,10 @@ fn allow_unfinal_walks_from_tip() {
     assert_eq!(f.block_id, h(0x31));
     assert_eq!(f.slot, 1003);
     // Depth 1 only sees the tip.
-    let shallow = ProduceArgs::parse(Some(&json!({"allow_unfinal": true, "scan_depth_blocks": 1}))).unwrap();
+    let shallow = ProduceArgs::parse(Some(
+        &json!({"allow_unfinal": true, "scan_depth_blocks": 1}),
+    ))
+    .unwrap();
     assert!(discover(&n, &shallow).is_err());
 }
 
@@ -181,17 +201,35 @@ fn pinned_nullifier_mode() {
     let (b30, ev30) = direct_block(0x30, 990, 0x03, K);
     n.add_block(b30, ev30, true);
 
-    let args = ProduceArgs::parse(Some(&json!({"claim_block_id": h(0x20), "pow_nullifier": h(0x02)}))).unwrap();
+    let args = ProduceArgs::parse(Some(
+        &json!({"claim_block_id": h(0x20), "pow_nullifier": h(0x02)}),
+    ))
+    .unwrap();
     let f = discover(&n, &args).unwrap();
-    assert_eq!((f.block_id.as_str(), f.nullifier.as_str()), (h(0x20).as_str(), h(0x02).as_str()));
+    assert_eq!(
+        (f.block_id.as_str(), f.nullifier.as_str()),
+        (h(0x20).as_str(), h(0x02).as_str())
+    );
     assert!(n.ranges.borrow().is_empty(), "pinned mode must not scan");
 
     let no_block = ProduceArgs::parse(Some(&json!({"pow_nullifier": h(0x02)}))).unwrap();
-    assert!(discover(&n, &no_block).unwrap_err().contains("claim_block_id"));
-    let missing = ProduceArgs::parse(Some(&json!({"claim_block_id": h(0x99), "pow_nullifier": h(0x02)}))).unwrap();
-    assert!(discover(&n, &missing).unwrap_err().contains("claim block not found"));
-    let wrong = ProduceArgs::parse(Some(&json!({"claim_block_id": h(0x30), "pow_nullifier": h(0x02)}))).unwrap();
-    assert!(discover(&n, &wrong).unwrap_err().contains("no PoWRewardClaimed"));
+    assert!(discover(&n, &no_block)
+        .unwrap_err()
+        .contains("claim_block_id"));
+    let missing = ProduceArgs::parse(Some(
+        &json!({"claim_block_id": h(0x99), "pow_nullifier": h(0x02)}),
+    ))
+    .unwrap();
+    assert!(discover(&n, &missing)
+        .unwrap_err()
+        .contains("claim block not found"));
+    let wrong = ProduceArgs::parse(Some(
+        &json!({"claim_block_id": h(0x30), "pow_nullifier": h(0x02)}),
+    ))
+    .unwrap();
+    assert!(discover(&n, &wrong)
+        .unwrap_err()
+        .contains("no PoWRewardClaimed"));
 }
 
 /// Claim minted to MINER; same tx contains `transfer_op`.
@@ -199,7 +237,12 @@ fn spend_scenario(transfer_op: Value) -> FakeNode {
     let mut n = node(1000, &h(0x40));
     let u = utxo(0x40, MINER);
     let tx = h(0xb0);
-    let b = block(&h(0x40), &h(0x3f), 995, vec![(tx.clone(), vec![transfer_op])]);
+    let b = block(
+        &h(0x40),
+        &h(0x3f),
+        995,
+        vec![(tx.clone(), vec![transfer_op])],
+    );
     n.add_block(b, vec![claim_event(&tx, &h(0x0b), &u)], true);
     n
 }
@@ -241,7 +284,12 @@ fn front_run_accepted_loose() {
 fn transfer_in_other_tx_does_not_count() {
     let mut n = node(1000, &h(0x40));
     let u = utxo(0x40, MINER);
-    let b = block(&h(0x40), &h(0x3f), 995, vec![(h(0xb0), vec![]), (h(0xb1), vec![transfer(&[h(0x77)], K)])]);
+    let b = block(
+        &h(0x40),
+        &h(0x3f),
+        995,
+        vec![(h(0xb0), vec![]), (h(0xb1), vec![transfer(&[h(0x77)], K)])],
+    );
     n.add_block(b, vec![claim_event(&h(0xb0), &h(0x0b), &u)], true);
     assert!(discover(&n, &ProduceArgs::default()).is_err());
 }

@@ -10,9 +10,9 @@ use base58::FromBase58;
 use k256::schnorr::signature::hazmat::PrehashVerifier;
 #[cfg(feature = "verify")]
 use k256::schnorr::{Signature, VerifyingKey};
-use rln_auth_vector::{strip_0x, Identity};
 #[cfg(feature = "verify")]
 use rln_auth_vector::{reason, Binding, Check, Decoded, Outcome, Scheme, Transport};
+use rln_auth_vector::{strip_0x, Identity};
 use sha2::{Digest, Sha256};
 
 pub const NAME: &str = "lez";
@@ -49,9 +49,14 @@ pub fn parse_account_id(s: &str) -> Result<String, String> {
     if h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Ok(h.to_ascii_lowercase());
     }
-    let bytes = s.from_base58().map_err(|e| format!("account id '{s}': neither 64 hex nor base58 ({e:?})"))?;
+    let bytes = s
+        .from_base58()
+        .map_err(|e| format!("account id '{s}': neither 64 hex nor base58 ({e:?})"))?;
     if bytes.len() != 32 {
-        return Err(format!("account id '{s}': base58 decodes to {} bytes, want 32", bytes.len()));
+        return Err(format!(
+            "account id '{s}': base58 decodes to {} bytes, want 32",
+            bytes.len()
+        ));
     }
     Ok(hex::encode(bytes))
 }
@@ -78,9 +83,20 @@ impl Scheme for Lez {
         }
         let (part, rest) = body.split_at(PART_LEN);
         let xonly: [u8; 32] = part[..32].try_into().expect("32 bytes");
-        Outcome::Ok(Decoded { claimed: Some(Box::new(LezAccount(hex::encode(account_id(&xonly))))), part, rest })
+        Outcome::Ok(Decoded {
+            claimed: Some(Box::new(LezAccount(hex::encode(account_id(&xonly))))),
+            part,
+            rest,
+        })
     }
-    fn verify(&self, _cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>, _t: &Transport<'_>) -> Check<Box<dyn Identity>> {
+    fn verify(
+        &self,
+        _cfg: &dyn Any,
+        _b: &Binding,
+        digest: &[u8; 32],
+        d: &Decoded<'_>,
+        _t: &Transport<'_>,
+    ) -> Check<Box<dyn Identity>> {
         let vk = match VerifyingKey::from_bytes(&d.part[..32]) {
             Ok(k) => k,
             Err(e) => return Ok(Outcome::Reject(format!("public key: {e}"))),
@@ -93,7 +109,9 @@ impl Scheme for Lez {
             return Ok(Outcome::Reject(reason::SIG_FAILED.into()));
         }
         let xonly: [u8; 32] = d.part[..32].try_into().expect("32 bytes");
-        Ok(Outcome::Ok(Box::new(LezAccount(hex::encode(account_id(&xonly))))))
+        Ok(Outcome::Ok(Box::new(LezAccount(hex::encode(account_id(
+            &xonly,
+        ))))))
     }
 }
 
@@ -106,9 +124,11 @@ pub(crate) mod tests {
     use k256::SecretKey;
 
     // BIP-340 test vector 0: sk = 3.
-    pub(crate) const BIP340_PK0: &str = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+    pub(crate) const BIP340_PK0: &str =
+        "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
     // python3: hashlib.sha256(b"/LEE/v0.3/AccountId/Public/" + b"\0"*5 + pk).hexdigest(), base58 (Bitcoin alphabet).
-    pub(crate) const PK0_ACCT_HEX: &str = "ec2cbcd4488075c4b30678c30351327fdf99f3fe703edc2999b68f8fd12bdbc8";
+    pub(crate) const PK0_ACCT_HEX: &str =
+        "ec2cbcd4488075c4b30678c30351327fdf99f3fe703edc2999b68f8fd12bdbc8";
     pub(crate) const PK0_ACCT_B58: &str = "GtvnQVLsv8V34E3X9hMBR9hsUokapUgiE4o7vCU4VMB5";
 
     pub(crate) fn sk_bytes(n: u8) -> [u8; 32] {
@@ -141,8 +161,16 @@ pub(crate) mod tests {
         let mut seen_even = false;
         for n in 1..=8u8 {
             let sk = sk_bytes(n);
-            if odd_y(&sk) { seen_odd = true } else { seen_even = true }
-            let vk_bytes: [u8; 32] = SigningKey::from_bytes(&sk).unwrap().verifying_key().to_bytes().into();
+            if odd_y(&sk) {
+                seen_odd = true
+            } else {
+                seen_even = true
+            }
+            let vk_bytes: [u8; 32] = SigningKey::from_bytes(&sk)
+                .unwrap()
+                .verifying_key()
+                .to_bytes()
+                .into();
             assert_eq!(vk_bytes, lee_xonly(&sk), "sk {n}");
         }
         assert!(seen_odd && seen_even);
@@ -156,8 +184,14 @@ pub(crate) mod tests {
         assert_eq!(hex::encode(acct), PK0_ACCT_HEX);
         assert_eq!(acct.to_base58(), PK0_ACCT_B58);
         assert_eq!(parse_account_id(PK0_ACCT_B58).unwrap(), PK0_ACCT_HEX);
-        assert_eq!(parse_account_id(&format!(" 0X{} ", PK0_ACCT_HEX.to_uppercase())).unwrap(), PK0_ACCT_HEX);
-        assert!(parse_account_id("nope").is_err(), "decodes to fewer than 32 bytes");
+        assert_eq!(
+            parse_account_id(&format!(" 0X{} ", PK0_ACCT_HEX.to_uppercase())).unwrap(),
+            PK0_ACCT_HEX
+        );
+        assert!(
+            parse_account_id("nope").is_err(),
+            "decodes to fewer than 32 bytes"
+        );
         assert!(parse_account_id("0OIl").is_err(), "not base58 at all");
     }
 }

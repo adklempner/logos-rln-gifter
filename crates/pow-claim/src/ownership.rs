@@ -52,7 +52,9 @@ pub fn bytes32(v: &Value, what: &str) -> Result<[u8; 32], String> {
             Ok(o)
         }
         Value::String(s) => crate::args::hex32_bytes(what, s),
-        other => Err(format!("{what}: expected 32-byte array or hex, got {other}")),
+        other => Err(format!(
+            "{what}: expected 32-byte array or hex, got {other}"
+        )),
     }
 }
 

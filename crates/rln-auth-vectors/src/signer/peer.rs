@@ -13,7 +13,12 @@ impl Signer for PeerSigner {
     fn scheme(&self) -> &'static str {
         NAME
     }
-    fn sign(&self, _b: &Binding, _digest: &[u8; 32], _args: Option<&Value>) -> Result<Vec<u8>, String> {
+    fn sign(
+        &self,
+        _b: &Binding,
+        _digest: &[u8; 32],
+        _args: Option<&Value>,
+    ) -> Result<Vec<u8>, String> {
         Ok(Vec::new())
     }
     fn identity(&self, args: Option<&Value>) -> Result<Box<dyn Identity>, String> {
@@ -31,11 +36,20 @@ mod tests {
 
     #[test]
     fn signs_nothing_and_names_the_peer_it_is_told() {
-        let b = Binding { id_commitment: [1; 32], rate_max: 1, audience: String::new() };
+        let b = Binding {
+            id_commitment: [1; 32],
+            rate_max: 1,
+            audience: String::new(),
+        };
         assert!(PeerSigner.sign(&b, &[0; 32], None).unwrap().is_empty());
         let args = serde_json::json!({ "peer_id": ED25519_B58 });
-        assert_eq!(PeerSigner.identity(Some(&args)).unwrap().canonical(), parse_peer_id(ED25519_B58).unwrap());
-        let Err(e) = PeerSigner.identity(None) else { panic!() };
+        assert_eq!(
+            PeerSigner.identity(Some(&args)).unwrap().canonical(),
+            parse_peer_id(ED25519_B58).unwrap()
+        );
+        let Err(e) = PeerSigner.identity(None) else {
+            panic!()
+        };
         assert!(e.contains("peer_id"), "{e}");
     }
 }

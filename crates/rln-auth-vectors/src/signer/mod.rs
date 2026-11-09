@@ -35,7 +35,9 @@ impl KeySource for StaticKey {
 
 /// `args.private_key` as 32 bytes, if the request carries one.
 pub fn private_key_arg(args: Option<&Value>) -> Result<Option<[u8; 32]>, String> {
-    let Some(o) = args_object(args)? else { return Ok(None) };
+    let Some(o) = args_object(args)? else {
+        return Ok(None);
+    };
     match o.get("private_key") {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => {

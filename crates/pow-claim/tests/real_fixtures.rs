@@ -33,8 +33,14 @@ fn real_gather_finds_the_recorded_claim() {
     let n = FakeNode::from_dir(dir()).unwrap();
     let c = gather(&n, &args(json!({}))).unwrap();
     assert_eq!(hex::encode(c.k), s(&m["k"]));
-    assert_eq!(hex::encode(c.evidence.claim_block_id), s(&m["claim_block_id"]));
-    assert_eq!(hex::encode(c.evidence.pow_nullifier), s(&m["pow_nullifier"]));
+    assert_eq!(
+        hex::encode(c.evidence.claim_block_id),
+        s(&m["claim_block_id"])
+    );
+    assert_eq!(
+        hex::encode(c.evidence.pow_nullifier),
+        s(&m["pow_nullifier"])
+    );
     assert_eq!(c.evidence.spend, None);
     assert!(n.last_sign().is_none());
 }
@@ -50,24 +56,43 @@ fn real_ownership_is_path_b_via_note_id() {
     let tx_hash = s(&m["tx_hash"]);
     let n = FakeNode::from_dir(dir()).unwrap();
     let block = n.blocks.get(&bid).unwrap();
-    let ev = n.events.get(&bid).unwrap().iter().find(|e| {
-        e["Tx"]["payload"]["PoWRewardClaimed"]["pow_nullifier"] == m["pow_nullifier"]
-    }).unwrap();
+    let ev = n
+        .events
+        .get(&bid)
+        .unwrap()
+        .iter()
+        .find(|e| e["Tx"]["payload"]["PoWRewardClaimed"]["pow_nullifier"] == m["pow_nullifier"])
+        .unwrap();
     let utxo = &ev["Tx"]["payload"]["PoWRewardClaimed"]["utxo"];
 
     // The reward note pays a throwaway ticket key, not K.
     assert_ne!(utxo["note"]["pk"].as_str().unwrap().to_lowercase(), k);
 
     let nid = note_id_hex(utxo).unwrap();
-    let tx = block["transactions"].as_array().unwrap().iter()
-        .find(|t| t["mantle_tx"]["hash"] == m["tx_hash"]).unwrap();
+    let tx = block["transactions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["mantle_tx"]["hash"] == m["tx_hash"])
+        .unwrap();
     assert_eq!(s(&tx["mantle_tx"]["hash"]), tx_hash);
-    let transfer = tx["mantle_tx"]["ops"].as_array().unwrap().iter()
-        .find(|o| o["opcode"].as_u64() == Some(0)).unwrap();
-    let inputs: Vec<String> = transfer["payload"]["inputs"].as_array().unwrap()
-        .iter().map(|i| s(i).to_lowercase()).collect();
+    let transfer = tx["mantle_tx"]["ops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["opcode"].as_u64() == Some(0))
+        .unwrap();
+    let inputs: Vec<String> = transfer["payload"]["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| s(i).to_lowercase())
+        .collect();
     assert!(inputs.contains(&nid), "NoteId {nid} not in Transfer inputs");
-    assert!(transfer["payload"]["outputs"].as_array().unwrap().iter()
+    assert!(transfer["payload"]["outputs"]
+        .as_array()
+        .unwrap()
+        .iter()
         .any(|o| s(&o["pk"]).to_lowercase() == k));
 
     let (got, path) = owner(ev, block, std::slice::from_ref(&k)).unwrap();
@@ -84,18 +109,31 @@ fn real_discovery_uses_immutable_range() {
     gather(&n, &args(json!({}))).unwrap();
     let ranges = n.ranges.borrow();
     assert!(!ranges.is_empty());
-    assert!(ranges.iter().any(|&(a, b)| a <= slot && slot <= b), "{ranges:?}");
+    assert!(
+        ranges.iter().any(|&(a, b)| a <= slot && slot <= b),
+        "{ranges:?}"
+    );
 }
 
 #[test]
 fn real_pinned_mode_matches() {
     let m = meta();
     let n = FakeNode::from_dir(dir()).unwrap();
-    let c = gather(&n, &args(json!({
-        "claim_block_id": m["claim_block_id"], "pow_nullifier": m["pow_nullifier"],
-    }))).unwrap();
-    assert_eq!(hex::encode(c.evidence.claim_block_id), s(&m["claim_block_id"]));
-    assert_eq!(hex::encode(c.evidence.pow_nullifier), s(&m["pow_nullifier"]));
+    let c = gather(
+        &n,
+        &args(json!({
+            "claim_block_id": m["claim_block_id"], "pow_nullifier": m["pow_nullifier"],
+        })),
+    )
+    .unwrap();
+    assert_eq!(
+        hex::encode(c.evidence.claim_block_id),
+        s(&m["claim_block_id"])
+    );
+    assert_eq!(
+        hex::encode(c.evidence.pow_nullifier),
+        s(&m["pow_nullifier"])
+    );
     assert!(n.ranges.borrow().is_empty(), "pinned mode must not scan");
 }
 
@@ -103,8 +141,12 @@ fn real_pinned_mode_matches() {
 fn real_excluded_nullifier_yields_not_found() {
     let m = meta();
     let n = FakeNode::from_dir(dir()).unwrap();
-    let e = gather(&n, &args(json!({
-        "exclude_nullifiers": [m["pow_nullifier"]], "allow_unfinal": false,
-    }))).unwrap_err();
+    let e = gather(
+        &n,
+        &args(json!({
+            "exclude_nullifiers": [m["pow_nullifier"]], "allow_unfinal": false,
+        })),
+    )
+    .unwrap_err();
     assert!(e.contains("no redeemable"), "{e}");
 }

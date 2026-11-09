@@ -41,7 +41,9 @@ fn candidate_keys(node: &dyn NodeApi, args: &ProduceArgs) -> Result<Vec<String>,
         })
         .unwrap_or_default();
     if ks.is_empty() {
-        return Err("no claim address: node has no pow.auto_claim.targets; pass claim_address".into());
+        return Err(
+            "no claim address: node has no pow.auto_claim.targets; pass claim_address".into(),
+        );
     }
     Ok(ks)
 }
@@ -72,7 +74,9 @@ fn scan_block(
 ) -> Result<Option<Found>, String> {
     let id = block_id(block)?;
     for ev in node.events(&id)? {
-        let Some(nul) = nullifier_of(&ev) else { continue };
+        let Some(nul) = nullifier_of(&ev) else {
+            continue;
+        };
         if exclude.iter().any(|x| x == &nul) {
             continue;
         }
@@ -160,7 +164,9 @@ pub fn discover(node: &dyn NodeApi, args: &ProduceArgs) -> Result<Found, String>
                     return Ok(f);
                 }
             }
-            cur = b["header"]["parent_block"].as_str().map(str::to_ascii_lowercase);
+            cur = b["header"]["parent_block"]
+                .as_str()
+                .map(str::to_ascii_lowercase);
         }
     }
 

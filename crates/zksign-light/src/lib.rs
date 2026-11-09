@@ -22,9 +22,9 @@ pub mod verify;
 
 #[cfg(feature = "client")]
 pub use client::{parse_sig_reply, pow_status, sign_zk, HttpZkNode, ZkNode, SIGN_MIN_TIMEOUT_MS};
+pub use rln_auth_vector::hex::{hex32_bytes, norm_hex32, strip_0x};
 #[cfg(feature = "verify")]
 pub use verify::{
-    default_vk, is_canonical_fr, verify_sig, vk_from_config, vk_from_path_cached, zero_pk, zero_pk_le,
-    PreparedVk, VkSource, DEFAULT_VK_JSON,
+    default_vk, is_canonical_fr, verify_sig, vk_from_config, vk_from_path_cached, zero_pk,
+    zero_pk_le, PreparedVk, VkSource, DEFAULT_VK_JSON,
 };
-pub use rln_auth_vector::hex::{hex32_bytes, norm_hex32, strip_0x};

@@ -83,9 +83,12 @@ pub mod testing {
             for ent in rd {
                 let ent = ent.map_err(|e| e.to_string())?;
                 let name = ent.file_name().to_string_lossy().to_string();
-                let Some(stem) = name.strip_suffix(".json") else { continue };
+                let Some(stem) = name.strip_suffix(".json") else {
+                    continue;
+                };
                 if let Some(id) = stem.strip_prefix("block_") {
-                    n.blocks.insert(id.to_ascii_lowercase(), read_json(&ent.path())?);
+                    n.blocks
+                        .insert(id.to_ascii_lowercase(), read_json(&ent.path())?);
                 } else if let Some(id) = stem.strip_prefix("events_") {
                     let v = read_json(&ent.path())?;
                     let arr = v
@@ -101,7 +104,10 @@ pub mod testing {
         /// Adds a block (keyed by `header.id`) with its events; if
         /// `immutable`, it is also served by `immutable_blocks`.
         pub fn add_block(&mut self, block: Value, events: Vec<Value>, immutable: bool) {
-            let id = block["header"]["id"].as_str().unwrap_or_default().to_ascii_lowercase();
+            let id = block["header"]["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
             if immutable {
                 self.immutable.push(block.clone());
             }

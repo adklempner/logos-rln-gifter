@@ -51,6 +51,8 @@ impl Claimant for PowClaimant {
         Ok(claim.evidence.encode())
     }
     fn extra(&self, evidence: &[u8]) -> Vec<u8> {
-        Evidence::decode(evidence).map(|(e, _)| e.pow_nullifier.to_vec()).unwrap_or_default()
+        Evidence::decode(evidence)
+            .map(|(e, _)| e.pow_nullifier.to_vec())
+            .unwrap_or_default()
     }
 }

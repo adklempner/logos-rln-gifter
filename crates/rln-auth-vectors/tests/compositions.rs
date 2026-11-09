@@ -3,11 +3,13 @@
 //! refusals that prove the composition rules.
 
 use rln_auth_vector::{
-    binding_digest, dispatch_produce, dispatch_verify, frame, reason, AuthType, Authoriser, Binding, Identity,
-    Outcome, ProduceRegistry, VerifyRegistry,
+    binding_digest, dispatch_produce, dispatch_verify, frame, reason, AuthType, Authoriser,
+    Binding, Identity, Outcome, ProduceRegistry, VerifyRegistry,
 };
 use rln_auth_vectors::authoriser::{Allowlist, Any, Attestation, PowClaim};
-use rln_auth_vectors::claimant::{AllowlistClaimant, AnyClaimant, AttestationClaimant, PowClaimant};
+use rln_auth_vectors::claimant::{
+    AllowlistClaimant, AnyClaimant, AttestationClaimant, PowClaimant,
+};
 use rln_auth_vectors::scheme::keycard::KeycardIdentity;
 use rln_auth_vectors::scheme::peer::parse_peer_id;
 use rln_auth_vectors::scheme::{Eth, Keycard, Lez, Logos, Peer};
@@ -62,7 +64,9 @@ fn producers() -> ProduceRegistry {
     ProduceRegistry::new()
         .signer(EthSigner(Box::new(StaticKey(PK42))))
         .signer(LezSigner(Box::new(StaticKey(sk3()))))
-        .signer(LogosSigner { node: Some(Box::new(FakeZk)) })
+        .signer(LogosSigner {
+            node: Some(Box::new(FakeZk)),
+        })
         .signer(PeerSigner)
         .claimant(AllowlistClaimant)
         .claimant(AnyClaimant)
@@ -79,7 +83,13 @@ fn verify(auth_type: &str, payload_hex: &str, rate: u64, config: Value) -> Value
     verify_from(auth_type, payload_hex, rate, config, None)
 }
 
-fn verify_from(auth_type: &str, payload_hex: &str, rate: u64, config: Value, peer_id: Option<&str>) -> Value {
+fn verify_from(
+    auth_type: &str,
+    payload_hex: &str,
+    rate: u64,
+    config: Value,
+    peer_id: Option<&str>,
+) -> Value {
     let mut req = json!({
         "auth_type": auth_type, "payload_hex": payload_hex,
         "id_commitment_hex": IDC, "rate": rate, "config": config
@@ -91,18 +101,34 @@ fn verify_from(auth_type: &str, payload_hex: &str, rate: u64, config: Value, pee
 }
 
 fn reason_of(v: &Value) -> &str {
-    v["reason"].as_str().unwrap_or_else(|| panic!("no reason: {v}"))
+    v["reason"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no reason: {v}"))
 }
 
 #[test]
 fn the_registries_compose_exactly_the_twelve_vectors() {
     let want = [
-        "eth-allowlist", "eth-any", "lez-allowlist", "lez-any", "logos-allowlist", "logos-any", "logos-pow-claim",
-        "keycard-allowlist", "keycard-any", "keycard-attestation", "peer-allowlist", "peer-any",
+        "eth-allowlist",
+        "eth-any",
+        "lez-allowlist",
+        "lez-any",
+        "logos-allowlist",
+        "logos-any",
+        "logos-pow-claim",
+        "keycard-allowlist",
+        "keycard-any",
+        "keycard-attestation",
+        "peer-allowlist",
+        "peer-any",
     ];
     assert_eq!(verifiers().auth_types(), want);
     // The producers here lack the keycard signer (PC/SC), so no keycard-* types.
-    let produced: Vec<_> = want.iter().filter(|t| !t.starts_with("keycard-")).copied().collect();
+    let produced: Vec<_> = want
+        .iter()
+        .filter(|t| !t.starts_with("keycard-"))
+        .copied()
+        .collect();
     assert_eq!(producers().auth_types(), produced);
 }
 
@@ -130,7 +156,12 @@ fn peer_any_is_the_transports_identity_once_per_peer() {
     assert!(reason_of(&v).contains("too short"), "{v}");
     // The payload identity of a signing scheme is still what `any` nullifies.
     let p = produce("eth-any", json!({}));
-    let v = verify("eth-any", p["payload_hex"].as_str().unwrap(), 100, json!({ "audience": "" }));
+    let v = verify(
+        "eth-any",
+        p["payload_hex"].as_str().unwrap(),
+        100,
+        json!({ "audience": "" }),
+    );
     assert_eq!(v["ok"], true, "{v}");
     assert_eq!(v["nullifier"], ADDR42);
 }
@@ -140,13 +171,31 @@ fn peer_allowlist_lists_peer_ids_in_either_spelling() {
     let payload = "026400000000000000";
     let hexid = parse_peer_id(PEER_B58).unwrap();
     for entry in [PEER_B58.to_string(), hexid.to_uppercase()] {
-        let v = verify_from("peer-allowlist", payload, 100, json!({ "allowlist": [entry] }), Some(PEER_B58));
+        let v = verify_from(
+            "peer-allowlist",
+            payload,
+            100,
+            json!({ "allowlist": [entry] }),
+            Some(PEER_B58),
+        );
         assert_eq!(v["ok"], true, "{v}");
         assert_eq!(v["nullifier"], hexid);
     }
-    let v = verify_from("peer-allowlist", payload, 100, json!({ "allowlist": [OTHER_PEER_B58] }), Some(PEER_B58));
+    let v = verify_from(
+        "peer-allowlist",
+        payload,
+        100,
+        json!({ "allowlist": [OTHER_PEER_B58] }),
+        Some(PEER_B58),
+    );
     assert_eq!(reason_of(&v), format!("peer not allowlisted: {hexid}"));
-    let v = verify_from("peer-allowlist", payload, 100, json!({ "allowlist": ["zz"] }), Some(PEER_B58));
+    let v = verify_from(
+        "peer-allowlist",
+        payload,
+        100,
+        json!({ "allowlist": ["zz"] }),
+        Some(PEER_B58),
+    );
     assert!(v["error"].as_str().unwrap().contains("'zz'"), "{v}");
 }
 
@@ -154,39 +203,82 @@ fn peer_allowlist_lists_peer_ids_in_either_spelling() {
 fn eth_allowlist_round_trips_and_matches_foundry() {
     let p = produce("eth-allowlist", json!({ "rate_max": 100 }));
     let payload = p["payload_hex"].as_str().unwrap_or_else(|| panic!("{p}"));
-    let v = verify("eth-allowlist", payload, 100, json!({ "allowlist": [ADDR42.to_uppercase().replace("0X", "0x")] }));
+    let v = verify(
+        "eth-allowlist",
+        payload,
+        100,
+        json!({ "allowlist": [ADDR42.to_uppercase().replace("0X", "0x")] }),
+    );
     assert_eq!(v["ok"], true, "{v}");
     assert_eq!(v["nullifier"], ADDR42);
 
     // A wallet signature made outside the pipeline frames the same way.
     let framed = frame(&hex::decode(CAST_SIG).unwrap(), &[], 100);
-    let v = verify("eth-allowlist", &format!("0x{}", hex::encode(framed)), 100, json!({ "allowlist": [ADDR42] }));
+    let v = verify(
+        "eth-allowlist",
+        &format!("0x{}", hex::encode(framed)),
+        100,
+        json!({ "allowlist": [ADDR42] }),
+    );
     assert_eq!(v["ok"], true, "{v}");
 
-    let v = verify("eth-allowlist", payload, 100, json!({ "allowlist": ["0x0000000000000000000000000000000000000001"] }));
+    let v = verify(
+        "eth-allowlist",
+        payload,
+        100,
+        json!({ "allowlist": ["0x0000000000000000000000000000000000000001"] }),
+    );
     assert_eq!(reason_of(&v), format!("address not allowlisted: {ADDR42}"));
     let v = verify("eth-allowlist", payload, 100, json!({ "allowlist": [] }));
     assert_eq!(v["error"], reason::ALLOWLIST_EMPTY);
     let v = verify("eth-allowlist", payload, 100, json!({}));
     assert!(v["error"].as_str().unwrap().contains("required"), "{v}");
-    let v = verify("eth-allowlist", payload, 100, json!({ "allowlist": ["0x1234"] }));
+    let v = verify(
+        "eth-allowlist",
+        payload,
+        100,
+        json!({ "allowlist": ["0x1234"] }),
+    );
     assert!(v["error"].as_str().unwrap().contains("\"0x1234\""), "{v}");
 }
 
 #[test]
 fn lez_allowlist_round_trips_with_hex_or_base58_entries() {
-    let p = produce("lez-allowlist", json!({ "rate_max": 10, "audience": "gifter-1" }));
+    let p = produce(
+        "lez-allowlist",
+        json!({ "rate_max": 10, "audience": "gifter-1" }),
+    );
     let payload = p["payload_hex"].as_str().unwrap_or_else(|| panic!("{p}"));
     for entry in [PK0_ACCT_HEX, PK0_ACCT_B58] {
-        let v = verify("lez-allowlist", payload, 10, json!({ "allowlist": [entry], "audience": "gifter-1" }));
+        let v = verify(
+            "lez-allowlist",
+            payload,
+            10,
+            json!({ "allowlist": [entry], "audience": "gifter-1" }),
+        );
         assert_eq!(v["ok"], true, "{v}");
         assert_eq!(v["nullifier"], PK0_ACCT_HEX);
     }
-    let v = verify("lez-allowlist", payload, 11, json!({ "allowlist": [PK0_ACCT_HEX], "audience": "gifter-1" }));
+    let v = verify(
+        "lez-allowlist",
+        payload,
+        11,
+        json!({ "allowlist": [PK0_ACCT_HEX], "audience": "gifter-1" }),
+    );
     assert_eq!(reason_of(&v), "rate 11 exceeds the signed rate_max 10");
-    let v = verify("lez-allowlist", payload, 10, json!({ "allowlist": [PK0_ACCT_HEX], "audience": "other" }));
+    let v = verify(
+        "lez-allowlist",
+        payload,
+        10,
+        json!({ "allowlist": [PK0_ACCT_HEX], "audience": "other" }),
+    );
     assert_eq!(reason_of(&v), reason::SIG_FAILED);
-    let v = verify("lez-allowlist", payload, 10, json!({ "allowlist": ["00".repeat(32)], "audience": "gifter-1" }));
+    let v = verify(
+        "lez-allowlist",
+        payload,
+        10,
+        json!({ "allowlist": ["00".repeat(32)], "audience": "gifter-1" }),
+    );
     assert!(reason_of(&v).starts_with("account not allowlisted"), "{v}");
 }
 
@@ -199,19 +291,41 @@ fn logos_allowlist_checks_membership_before_the_proof() {
     let v = verify("logos-allowlist", payload, 100, json!({ "allowlist": [K] }));
     assert!(reason_of(&v).contains("zkSign signature invalid"), "{v}");
     // Unlisted: refused before any proof work.
-    let v = verify("logos-allowlist", payload, 100, json!({ "allowlist": [hex::encode(zksign_light::zero_pk_le())] }));
+    let v = verify(
+        "logos-allowlist",
+        payload,
+        100,
+        json!({ "allowlist": [hex::encode(zksign_light::zero_pk_le())] }),
+    );
     assert_eq!(reason_of(&v), format!("public key not allowlisted: {K}"));
     // A big-endian key in the allowlist is an operator mistake.
-    let v = verify("logos-allowlist", payload, 100, json!({ "allowlist": ["ff".repeat(32)] }));
-    assert!(v["error"].as_str().unwrap().contains("big-endian paste"), "{v}");
-    let v = verify("logos-allowlist", payload, 100, json!({ "allowlist": [K], "zksign_vk_path": "/nonexistent/vk.json" }));
-    assert!(v["error"].as_str().unwrap().contains("zksign_vk_path"), "{v}");
+    let v = verify(
+        "logos-allowlist",
+        payload,
+        100,
+        json!({ "allowlist": ["ff".repeat(32)] }),
+    );
+    assert!(
+        v["error"].as_str().unwrap().contains("big-endian paste"),
+        "{v}"
+    );
+    let v = verify(
+        "logos-allowlist",
+        payload,
+        100,
+        json!({ "allowlist": [K], "zksign_vk_path": "/nonexistent/vk.json" }),
+    );
+    assert!(
+        v["error"].as_str().unwrap().contains("zksign_vk_path"),
+        "{v}"
+    );
 }
 
 #[test]
 fn logos_pow_claim_binds_the_claim_nullifier_and_needs_the_logos_scheme() {
     // Evidence from the synthetic chain, the part from the fake zkSign.
-    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../pow-claim/tests/fixtures/synthetic");
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../pow-claim/tests/fixtures/synthetic");
     let node = pow_claim::node::testing::FakeNode::from_dir(fixtures).unwrap();
     let args = pow_claim::ProduceArgs::parse(Some(&json!({ "audience": "poc" }))).unwrap();
     let claim = pow_claim::gather(&node, &args).unwrap();
@@ -219,58 +333,152 @@ fn logos_pow_claim_binds_the_claim_nullifier_and_needs_the_logos_scheme() {
     let evidence = claim.evidence.encode();
 
     let t = AuthType::parse("logos-pow-claim").unwrap();
-    let b = Binding { id_commitment: hex::decode(IDC).unwrap().try_into().unwrap(), rate_max: 100, audience: "poc".into() };
+    let b = Binding {
+        id_commitment: hex::decode(IDC).unwrap().try_into().unwrap(),
+        rate_max: 100,
+        audience: "poc".into(),
+    };
     let digest = binding_digest(&t, &b, &claim.evidence.pow_nullifier);
     let mut part = claim.k.to_vec();
     part.extend_from_slice(&FakeZk.sign_zk(&digest, K).unwrap());
     let payload = hex::encode(frame(&part, &evidence, 100));
 
-    let cfg = json!({ "node_url": "http://127.0.0.1:1", "audience": "poc", "http_timeout_ms": 300 });
+    let cfg =
+        json!({ "node_url": "http://127.0.0.1:1", "audience": "poc", "http_timeout_ms": 300 });
     let v = verify("logos-pow-claim", &payload, 100, cfg.clone());
-    assert!(reason_of(&v).contains("zkSign signature invalid"), "evidence decoded, digest bound, proof refused: {v}");
-    let v = verify("logos-pow-claim", &payload, 100, json!({ "audience": "poc" }));
+    assert!(
+        reason_of(&v).contains("zkSign signature invalid"),
+        "evidence decoded, digest bound, proof refused: {v}"
+    );
+    let v = verify(
+        "logos-pow-claim",
+        &payload,
+        100,
+        json!({ "audience": "poc" }),
+    );
     assert!(v["error"].as_str().unwrap().contains("node_url"), "{v}");
     let short = hex::encode(frame(&part, &evidence[..10], 100));
     let v = verify("logos-pow-claim", &short, 100, cfg);
     assert!(reason_of(&v).starts_with("evidence:"), "{v}");
 
     let v = verify("eth-pow-claim", &payload, 100, json!({}));
-    assert!(v["error"].as_str().unwrap().contains("does not accept the eth scheme"), "{v}");
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .contains("does not accept the eth scheme"),
+        "{v}"
+    );
     let req = json!({ "auth_type": "lez-pow-claim", "id_commitment_hex": IDC });
-    let out: Value = serde_json::from_str(&dispatch_produce(&req.to_string(), &producers())).unwrap();
-    assert!(out["error"].as_str().unwrap().contains("does not accept the lez scheme"), "{out}");
+    let out: Value =
+        serde_json::from_str(&dispatch_produce(&req.to_string(), &producers())).unwrap();
+    assert!(
+        out["error"]
+            .as_str()
+            .unwrap()
+            .contains("does not accept the lez scheme"),
+        "{out}"
+    );
 }
 
 #[test]
 fn keycard_allowlist_judges_the_card_before_its_signature() {
     let payload = hex::encode(frame(&hex::decode(GOLDEN_TLV).unwrap(), &[], 100));
-    let v = verify("keycard-allowlist", &payload, 100, json!({ "allowlist": [TEST_CA] }));
+    let v = verify(
+        "keycard-allowlist",
+        &payload,
+        100,
+        json!({ "allowlist": [TEST_CA] }),
+    );
     assert_eq!(reason_of(&v), format!("card not allowlisted: {IDENT_PUB}"));
     // Listed: the golden attestation signed a v1 challenge, not this binding.
-    let v = verify("keycard-allowlist", &payload, 100, json!({ "allowlist": [IDENT_PUB] }));
-    assert!(reason_of(&v).starts_with("attestation verification failed"), "{v}");
-    let v = verify("keycard-allowlist", "a0", 100, json!({ "allowlist": [IDENT_PUB] }));
-    assert!(reason_of(&v).contains("too short") || reason_of(&v).starts_with("attestation parse failed"), "{v}");
+    let v = verify(
+        "keycard-allowlist",
+        &payload,
+        100,
+        json!({ "allowlist": [IDENT_PUB] }),
+    );
+    assert!(
+        reason_of(&v).starts_with("attestation verification failed"),
+        "{v}"
+    );
+    let v = verify(
+        "keycard-allowlist",
+        "a0",
+        100,
+        json!({ "allowlist": [IDENT_PUB] }),
+    );
+    assert!(
+        reason_of(&v).contains("too short")
+            || reason_of(&v).starts_with("attestation parse failed"),
+        "{v}"
+    );
 }
 
 #[test]
 fn attestation_trusts_the_ca_that_signed_the_card_key() {
     let att = keycard_attest::attest::parse_attestation(&hex::decode(GOLDEN_TLV).unwrap()).unwrap();
-    let id = KeycardIdentity { ident_pub: att.ident_pub, ca_sig: att.ca_sig };
-    let cfg = Attestation.config(&Keycard, Some(&json!({ "trusted_cas": [TEST_CA], "audience": "x" }))).unwrap();
+    let id = KeycardIdentity {
+        ident_pub: att.ident_pub,
+        ca_sig: att.ca_sig,
+    };
+    let cfg = Attestation
+        .config(
+            &Keycard,
+            Some(&json!({ "trusted_cas": [TEST_CA], "audience": "x" })),
+        )
+        .unwrap();
     assert_eq!(Attestation.audience(cfg.as_ref()), "x");
-    assert!(matches!(Attestation.authorise(cfg.as_ref(), &id, &()).unwrap(), Outcome::Ok(())));
-    assert_eq!(Attestation.nullifier(&id, &()), hex::encode(keycard_attest::attest::nullifier(&att.ident_pub)));
-    let other = Attestation.config(&Keycard, Some(&json!({ "trusted_cas": [format!("02{}", "11".repeat(32))] }))).unwrap();
-    let Outcome::Reject(r) = Attestation.authorise(other.as_ref(), &id, &()).unwrap() else { panic!() };
+    assert!(matches!(
+        Attestation.authorise(cfg.as_ref(), &id, &()).unwrap(),
+        Outcome::Ok(())
+    ));
+    assert_eq!(
+        Attestation.nullifier(&id, &()),
+        hex::encode(keycard_attest::attest::nullifier(&att.ident_pub))
+    );
+    let other = Attestation
+        .config(
+            &Keycard,
+            Some(&json!({ "trusted_cas": [format!("02{}", "11".repeat(32))] })),
+        )
+        .unwrap();
+    let Outcome::Reject(r) = Attestation.authorise(other.as_ref(), &id, &()).unwrap() else {
+        panic!()
+    };
     assert!(r.contains("CA is not trusted"), "{r}");
-    assert!(Attestation.config(&Keycard, Some(&json!({ "trusted_cas": [] }))).unwrap_err().contains("empty"));
-    assert!(Attestation.config(&Keycard, None).unwrap_err().contains("required"));
+    assert!(Attestation
+        .config(&Keycard, Some(&json!({ "trusted_cas": [] })))
+        .unwrap_err()
+        .contains("empty"));
+    assert!(Attestation
+        .config(&Keycard, None)
+        .unwrap_err()
+        .contains("required"));
     assert!(!Attestation.accepts("eth") && Attestation.accepts("keycard"));
-    let v = verify("keycard-attestation", &hex::encode(frame(&hex::decode(GOLDEN_TLV).unwrap(), &[], 100)), 100, json!({ "trusted_cas": [TEST_CA] }));
-    assert!(reason_of(&v).starts_with("attestation verification failed"), "{v}");
-    let v = verify("eth-attestation", "00", 100, json!({ "trusted_cas": [TEST_CA] }));
-    assert!(v["error"].as_str().unwrap().contains("does not accept the eth scheme"), "{v}");
+    let v = verify(
+        "keycard-attestation",
+        &hex::encode(frame(&hex::decode(GOLDEN_TLV).unwrap(), &[], 100)),
+        100,
+        json!({ "trusted_cas": [TEST_CA] }),
+    );
+    assert!(
+        reason_of(&v).starts_with("attestation verification failed"),
+        "{v}"
+    );
+    let v = verify(
+        "eth-attestation",
+        "00",
+        100,
+        json!({ "trusted_cas": [TEST_CA] }),
+    );
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .contains("does not accept the eth scheme"),
+        "{v}"
+    );
     assert_eq!(id.canonical(), IDENT_PUB);
 }
 

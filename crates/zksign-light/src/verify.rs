@@ -99,8 +99,12 @@ impl VkSource {
 pub fn vk_from_config(v: Option<&serde_json::Value>) -> Result<VkSource, String> {
     match v {
         None | Some(serde_json::Value::Null) => Ok(VkSource::Default(default_vk()?)),
-        Some(serde_json::Value::String(p)) if !p.trim().is_empty() => Ok(VkSource::File(vk_from_path_cached(p.trim())?)),
-        Some(v) => Err(format!("config.zksign_vk_path: expected a non-empty string, got {v}")),
+        Some(serde_json::Value::String(p)) if !p.trim().is_empty() => {
+            Ok(VkSource::File(vk_from_path_cached(p.trim())?))
+        }
+        Some(v) => Err(format!(
+            "config.zksign_vk_path: expected a non-empty string, got {v}"
+        )),
     }
 }
 

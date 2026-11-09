@@ -32,16 +32,26 @@ impl VerifyRegistry {
             .schemes
             .iter()
             .find(|s| s.name() == t.scheme)
-            .ok_or_else(|| reason::unknown_composition(t, format!("no scheme '{}' on this module", t.scheme)))?;
+            .ok_or_else(|| {
+                reason::unknown_composition(t, format!("no scheme '{}' on this module", t.scheme))
+            })?;
         let a = self
             .authorisers
             .iter()
             .find(|a| a.name() == t.authoriser)
-            .ok_or_else(|| reason::unknown_composition(t, format!("no authoriser '{}' on this module", t.authoriser)))?;
+            .ok_or_else(|| {
+                reason::unknown_composition(
+                    t,
+                    format!("no authoriser '{}' on this module", t.authoriser),
+                )
+            })?;
         if !a.accepts(&t.scheme) {
             return Err(reason::unknown_composition(
                 t,
-                format!("the {} authoriser does not accept the {} scheme", t.authoriser, t.scheme),
+                format!(
+                    "the {} authoriser does not accept the {} scheme",
+                    t.authoriser, t.scheme
+                ),
             ));
         }
         Ok((s.as_ref(), a.as_ref()))
@@ -85,16 +95,26 @@ impl ProduceRegistry {
             .signers
             .iter()
             .find(|s| s.scheme() == t.scheme)
-            .ok_or_else(|| reason::unknown_composition(t, format!("no {} signer on this module", t.scheme)))?;
+            .ok_or_else(|| {
+                reason::unknown_composition(t, format!("no {} signer on this module", t.scheme))
+            })?;
         let c = self
             .claimants
             .iter()
             .find(|c| c.authoriser() == t.authoriser)
-            .ok_or_else(|| reason::unknown_composition(t, format!("no {} claimant on this module", t.authoriser)))?;
+            .ok_or_else(|| {
+                reason::unknown_composition(
+                    t,
+                    format!("no {} claimant on this module", t.authoriser),
+                )
+            })?;
         if !c.accepts(&t.scheme) {
             return Err(reason::unknown_composition(
                 t,
-                format!("the {} claimant does not accept the {} scheme", t.authoriser, t.scheme),
+                format!(
+                    "the {} claimant does not accept the {} scheme",
+                    t.authoriser, t.scheme
+                ),
             ));
         }
         Ok((s.as_ref(), c.as_ref()))
@@ -121,7 +141,9 @@ pub fn dispatch_verify(args_json: &str, r: &VerifyRegistry) -> String {
         verify_flow(r, &req)
     };
     match run() {
-        Ok(verdict) => serde_json::to_string(&verdict).unwrap_or_else(|e| error_reply(&e.to_string())),
+        Ok(verdict) => {
+            serde_json::to_string(&verdict).unwrap_or_else(|e| error_reply(&e.to_string()))
+        }
         Err(e) => error_reply(&e),
     }
 }

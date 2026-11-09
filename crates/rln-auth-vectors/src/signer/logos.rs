@@ -24,17 +24,25 @@ pub struct NodeArgs {
 
 impl Default for NodeArgs {
     fn default() -> Self {
-        NodeArgs { node_url: DEFAULT_NODE_URL.into(), public_key: None, http_timeout_ms: DEFAULT_HTTP_TIMEOUT_MS }
+        NodeArgs {
+            node_url: DEFAULT_NODE_URL.into(),
+            public_key: None,
+            http_timeout_ms: DEFAULT_HTTP_TIMEOUT_MS,
+        }
     }
 }
 
 impl NodeArgs {
     pub fn parse(raw: Option<&Value>) -> Result<NodeArgs, String> {
-        let Some(o) = args_object(raw)? else { return Ok(NodeArgs::default()) };
+        let Some(o) = args_object(raw)? else {
+            return Ok(NodeArgs::default());
+        };
         let mut a = NodeArgs::default();
         match o.get("node_url") {
             None | Some(Value::Null) => {}
-            Some(Value::String(s)) if !s.trim().is_empty() => a.node_url = s.trim().trim_end_matches('/').to_string(),
+            Some(Value::String(s)) if !s.trim().is_empty() => {
+                a.node_url = s.trim().trim_end_matches('/').to_string()
+            }
             Some(Value::String(_)) => {}
             Some(v) => return Err(format!("node_url: expected string, got {v}")),
         }
@@ -46,9 +54,15 @@ impl NodeArgs {
         match o.get("http_timeout_ms") {
             None | Some(Value::Null) => {}
             Some(Value::Number(n)) => {
-                a.http_timeout_ms = n.as_u64().ok_or_else(|| format!("http_timeout_ms: expected unsigned integer, got {n}"))?
+                a.http_timeout_ms = n
+                    .as_u64()
+                    .ok_or_else(|| format!("http_timeout_ms: expected unsigned integer, got {n}"))?
             }
-            Some(v) => return Err(format!("http_timeout_ms: expected unsigned integer, got {v}")),
+            Some(v) => {
+                return Err(format!(
+                    "http_timeout_ms: expected unsigned integer, got {v}"
+                ))
+            }
         }
         Ok(a)
     }
@@ -95,10 +109,17 @@ impl LogosSigner {
     pub fn http() -> Self {
         LogosSigner { node: None }
     }
-    fn with_node<T>(&self, args: &NodeArgs, f: impl FnOnce(&dyn ZkNode) -> Result<T, String>) -> Result<T, String> {
+    fn with_node<T>(
+        &self,
+        args: &NodeArgs,
+        f: impl FnOnce(&dyn ZkNode) -> Result<T, String>,
+    ) -> Result<T, String> {
         match &self.node {
             Some(n) => f(n.as_ref()),
-            None => f(&HttpZkNode { url: args.node_url.clone(), timeout_ms: args.http_timeout_ms }),
+            None => f(&HttpZkNode {
+                url: args.node_url.clone(),
+                timeout_ms: args.http_timeout_ms,
+            }),
         }
     }
 }
@@ -108,7 +129,12 @@ impl Signer for LogosSigner {
         NAME
     }
     /// `K(32) ‖ zksig(128)`.
-    fn sign(&self, _b: &Binding, digest: &[u8; 32], args: Option<&Value>) -> Result<Vec<u8>, String> {
+    fn sign(
+        &self,
+        _b: &Binding,
+        digest: &[u8; 32],
+        args: Option<&Value>,
+    ) -> Result<Vec<u8>, String> {
         let a = NodeArgs::parse(args)?;
         self.with_node(&a, |node| {
             let (k_hex, _) = resolve_key(node, &a)?;
@@ -148,27 +174,58 @@ pub(crate) mod tests {
     pub(crate) const K: &str = "e3635f207984ae779cf76b5f20714b514373f61ff96260879fe0a6d71f2dce07";
     pub(crate) fn fake(targets: Vec<&str>) -> FakeNode {
         let t: Vec<Value> = targets.iter().map(|k| json!({ "public_key": k })).collect();
-        FakeNode { status: json!({ "auto_claim": { "targets": t } }), sig: [0xab; 128], last: Default::default() }
+        FakeNode {
+            status: json!({ "auto_claim": { "targets": t } }),
+            sig: [0xab; 128],
+            last: Default::default(),
+        }
     }
 
     #[test]
     fn args_parse_and_key_resolution() {
         let a = NodeArgs::parse(Some(&json!({ "node_url": "http://x:1/", "public_key": format!("0x{}", K.to_uppercase()), "http_timeout_ms": 5 }))).unwrap();
-        assert_eq!((a.node_url.as_str(), a.public_key.as_deref(), a.http_timeout_ms), ("http://x:1", Some(K), 5));
-        assert_eq!(NodeArgs::parse(Some(&json!("{\"node_url\":\"http://y:2\"}"))).unwrap().node_url, "http://y:2");
-        assert!(NodeArgs::parse(Some(&json!({ "public_key": "zz" }))).unwrap_err().starts_with("public_key"));
+        assert_eq!(
+            (
+                a.node_url.as_str(),
+                a.public_key.as_deref(),
+                a.http_timeout_ms
+            ),
+            ("http://x:1", Some(K), 5)
+        );
+        assert_eq!(
+            NodeArgs::parse(Some(&json!("{\"node_url\":\"http://y:2\"}")))
+                .unwrap()
+                .node_url,
+            "http://y:2"
+        );
+        assert!(NodeArgs::parse(Some(&json!({ "public_key": "zz" })))
+            .unwrap_err()
+            .starts_with("public_key"));
 
         let n = fake(vec![K]);
-        assert_eq!(resolve_key(&n, &NodeArgs::default()).unwrap(), (K.to_string(), "pow_status"));
+        assert_eq!(
+            resolve_key(&n, &NodeArgs::default()).unwrap(),
+            (K.to_string(), "pow_status")
+        );
         assert_eq!(resolve_key(&n, &a).unwrap().1, "args");
-        assert!(resolve_key(&fake(vec![]), &NodeArgs::default()).unwrap_err().contains("no /pow/status"));
-        assert!(resolve_key(&fake(vec![K, K]), &NodeArgs::default()).unwrap_err().contains("2 /pow/status"));
+        assert!(resolve_key(&fake(vec![]), &NodeArgs::default())
+            .unwrap_err()
+            .contains("no /pow/status"));
+        assert!(resolve_key(&fake(vec![K, K]), &NodeArgs::default())
+            .unwrap_err()
+            .contains("2 /pow/status"));
     }
 
     #[test]
     fn signer_builds_the_part_from_the_node() {
-        let s = LogosSigner { node: Some(Box::new(fake(vec![K]))) };
-        let b = Binding { id_commitment: [1; 32], rate_max: 100, audience: String::new() };
+        let s = LogosSigner {
+            node: Some(Box::new(fake(vec![K]))),
+        };
+        let b = Binding {
+            id_commitment: [1; 32],
+            rate_max: 100,
+            audience: String::new(),
+        };
         let part = s.sign(&b, &[9; 32], None).unwrap();
         assert_eq!(part.len(), 160);
         assert_eq!(hex::encode(&part[..32]), K);

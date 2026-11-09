@@ -38,7 +38,11 @@ pub fn verify_flow(r: &VerifyRegistry, req: &VerifyRequest) -> Result<Verdict, S
     if !rest.is_empty() {
         return Ok(Verdict::reject(reason::trailing_bytes(rest.len())));
     }
-    let b = reject_on!(Binding::for_verify(req, rate_max, auth.audience(cfg.as_ref())));
+    let b = reject_on!(Binding::for_verify(
+        req,
+        rate_max,
+        auth.audience(cfg.as_ref())
+    ));
     if req.rate > rate_max {
         return Ok(Verdict::reject(reason::rate_exceeds(req.rate, rate_max)));
     }
@@ -52,7 +56,9 @@ pub fn verify_flow(r: &VerifyRegistry, req: &VerifyRequest) -> Result<Verdict, S
     };
 
     let digest = binding_digest(&t, &b, &auth.extra(ev.as_ref()));
-    let transport = Transport { peer_id: req.peer_id.as_deref() };
+    let transport = Transport {
+        peer_id: req.peer_id.as_deref(),
+    };
     let proven = reject_on!(scheme.verify(scfg.as_ref(), &b, &digest, &d, &transport)?);
     if let Some(claimed) = &d.claimed {
         let (c, p) = (claimed.canonical(), proven.canonical());
@@ -63,7 +69,9 @@ pub fn verify_flow(r: &VerifyRegistry, req: &VerifyRequest) -> Result<Verdict, S
     if !judged_claim {
         reject_on!(auth.authorise(cfg.as_ref(), proven.as_ref(), ev.as_ref())?);
     }
-    Ok(Verdict::accept(Some(auth.nullifier(proven.as_ref(), ev.as_ref()))))
+    Ok(Verdict::accept(Some(
+        auth.nullifier(proven.as_ref(), ev.as_ref()),
+    )))
 }
 
 /// binding → evidence → digest → scheme part → frame.
@@ -74,7 +82,9 @@ pub fn produce_flow(r: &ProduceRegistry, req: &ProduceRequest) -> Result<Produce
     let evidence = claimant.gather(&b, req.args.as_ref())?;
     let digest = binding_digest(&t, &b, &claimant.extra(&evidence));
     let part = signer.sign(&b, &digest, req.args.as_ref())?;
-    Ok(ProduceReply { payload_hex: hex::encode(frame(&part, &evidence, b.rate_max)) })
+    Ok(ProduceReply {
+        payload_hex: hex::encode(frame(&part, &evidence, b.rate_max)),
+    })
 }
 
 #[cfg(test)]
@@ -86,7 +96,9 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::*;
-    use crate::pieces::{Authoriser, Cfg, Check, Claimant, Decoded, Evidence, Identity, Scheme, Signer, Transport};
+    use crate::pieces::{
+        Authoriser, Cfg, Check, Claimant, Decoded, Evidence, Identity, Scheme, Signer, Transport,
+    };
     use crate::registry::{dispatch_produce, dispatch_verify};
 
     struct ToyId(String);
@@ -112,9 +124,20 @@ mod tests {
                 return Outcome::Reject(format!("toy part must be 33 bytes, got {}", body.len()));
             }
             let (part, rest) = body.split_at(33);
-            Outcome::Ok(Decoded { claimed: Some(Box::new(ToyId(hex::encode(&part[..32])))), part, rest })
+            Outcome::Ok(Decoded {
+                claimed: Some(Box::new(ToyId(hex::encode(&part[..32])))),
+                part,
+                rest,
+            })
         }
-        fn verify(&self, _cfg: &dyn Any, _b: &Binding, digest: &[u8; 32], d: &Decoded<'_>, _t: &Transport<'_>) -> Check<Box<dyn Identity>> {
+        fn verify(
+            &self,
+            _cfg: &dyn Any,
+            _b: &Binding,
+            digest: &[u8; 32],
+            d: &Decoded<'_>,
+            _t: &Transport<'_>,
+        ) -> Check<Box<dyn Identity>> {
             if d.part[32] != digest[0] {
                 return Ok(Outcome::Reject(reason::SIG_FAILED.into()));
             }
@@ -127,7 +150,12 @@ mod tests {
         fn scheme(&self) -> &'static str {
             self.0
         }
-        fn sign(&self, _b: &Binding, digest: &[u8; 32], _args: Option<&Value>) -> Result<Vec<u8>, String> {
+        fn sign(
+            &self,
+            _b: &Binding,
+            digest: &[u8; 32],
+            _args: Option<&Value>,
+        ) -> Result<Vec<u8>, String> {
             let mut v = self.1.to_vec();
             v.push(digest[0]);
             Ok(v)
@@ -154,9 +182,17 @@ mod tests {
                 .ok_or_else(|| reason::allowlist_required("toy ids"))?;
             let list = entries
                 .iter()
-                .map(|e| e.as_str().ok_or(reason::ENTRIES_NOT_STRINGS.to_string()).and_then(|s| scheme.parse_identity(s)))
+                .map(|e| {
+                    e.as_str()
+                        .ok_or(reason::ENTRIES_NOT_STRINGS.to_string())
+                        .and_then(|s| scheme.parse_identity(s))
+                })
                 .collect::<Result<Vec<_>, _>>()?;
-            let aud = raw.and_then(|c| c.get("audience")).and_then(Value::as_str).unwrap_or("").to_string();
+            let aud = raw
+                .and_then(|c| c.get("audience"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             Ok(Box::new(ListCfg(list, aud)))
         }
         fn audience<'a>(&self, cfg: &'a dyn Any) -> &'a str {
@@ -176,7 +212,10 @@ mod tests {
             if cfg.0.contains(&id.canonical()) {
                 Ok(Outcome::Ok(()))
             } else {
-                Ok(Outcome::Reject(reason::not_allowlisted("toy id", &id.canonical())))
+                Ok(Outcome::Reject(reason::not_allowlisted(
+                    "toy id",
+                    &id.canonical(),
+                )))
             }
         }
     }
@@ -244,7 +283,12 @@ mod tests {
             scheme == "toy"
         }
         fn gather(&self, _b: &Binding, args: Option<&Value>) -> Result<Vec<u8>, String> {
-            Ok(args.and_then(|a| a.get("stamp")).and_then(Value::as_str).unwrap_or("stmp").as_bytes().to_vec())
+            Ok(args
+                .and_then(|a| a.get("stamp"))
+                .and_then(Value::as_str)
+                .unwrap_or("stmp")
+                .as_bytes()
+                .to_vec())
         }
         fn extra(&self, evidence: &[u8]) -> Vec<u8> {
             evidence.to_vec()
@@ -253,7 +297,11 @@ mod tests {
 
     const KEY: [u8; 32] = [0x42; 32];
     fn verify_registry() -> VerifyRegistry {
-        VerifyRegistry::new().scheme(Toy("toy")).scheme(Toy("alt")).authoriser(List).authoriser(Stamp)
+        VerifyRegistry::new()
+            .scheme(Toy("toy"))
+            .scheme(Toy("alt"))
+            .authoriser(List)
+            .authoriser(Stamp)
     }
     fn produce_registry() -> ProduceRegistry {
         ProduceRegistry::new()
@@ -263,9 +311,14 @@ mod tests {
             .claimant(StampClaim)
     }
     fn produce(auth_type: &str, args: Value) -> String {
-        let req = json!({ "auth_type": auth_type, "id_commitment_hex": "11".repeat(32), "args": args });
-        let out: Value = serde_json::from_str(&dispatch_produce(&req.to_string(), &produce_registry())).unwrap();
-        out["payload_hex"].as_str().unwrap_or_else(|| panic!("{out}")).to_string()
+        let req =
+            json!({ "auth_type": auth_type, "id_commitment_hex": "11".repeat(32), "args": args });
+        let out: Value =
+            serde_json::from_str(&dispatch_produce(&req.to_string(), &produce_registry())).unwrap();
+        out["payload_hex"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{out}"))
+            .to_string()
     }
     fn verify(auth_type: &str, payload_hex: &str, rate: u64, config: Value) -> Value {
         let req = json!({
@@ -280,8 +333,14 @@ mod tests {
 
     #[test]
     fn registries_list_only_the_compositions_that_exist() {
-        assert_eq!(verify_registry().auth_types(), ["toy-list", "toy-stamp", "alt-list"]);
-        assert_eq!(produce_registry().auth_types(), ["toy-list", "toy-stamp", "alt-list"]);
+        assert_eq!(
+            verify_registry().auth_types(),
+            ["toy-list", "toy-stamp", "alt-list"]
+        );
+        assert_eq!(
+            produce_registry().auth_types(),
+            ["toy-list", "toy-stamp", "alt-list"]
+        );
     }
 
     #[test]
@@ -302,29 +361,63 @@ mod tests {
     #[test]
     fn refused_and_unknown_compositions_use_the_error_envelope() {
         let req = json!({ "auth_type": "alt-stamp", "payload_hex": "00", "id_commitment_hex": "11".repeat(32) });
-        let out: Value = serde_json::from_str(&dispatch_verify(&req.to_string(), &verify_registry())).unwrap();
-        assert!(out["error"].as_str().unwrap().contains("does not accept the alt scheme"), "{out}");
+        let out: Value =
+            serde_json::from_str(&dispatch_verify(&req.to_string(), &verify_registry())).unwrap();
+        assert!(
+            out["error"]
+                .as_str()
+                .unwrap()
+                .contains("does not accept the alt scheme"),
+            "{out}"
+        );
         let req = json!({ "auth_type": "nope-list", "payload_hex": "00", "id_commitment_hex": "11".repeat(32) });
-        let out: Value = serde_json::from_str(&dispatch_verify(&req.to_string(), &verify_registry())).unwrap();
-        assert!(out["error"].as_str().unwrap().contains("unknown auth_type 'nope-list'"), "{out}");
+        let out: Value =
+            serde_json::from_str(&dispatch_verify(&req.to_string(), &verify_registry())).unwrap();
+        assert!(
+            out["error"]
+                .as_str()
+                .unwrap()
+                .contains("unknown auth_type 'nope-list'"),
+            "{out}"
+        );
         let req = json!({ "auth_type": "alt-stamp", "id_commitment_hex": "11".repeat(32) });
-        let out: Value = serde_json::from_str(&dispatch_produce(&req.to_string(), &produce_registry())).unwrap();
-        assert!(out["error"].as_str().unwrap().contains("unknown auth_type"), "{out}");
+        let out: Value =
+            serde_json::from_str(&dispatch_produce(&req.to_string(), &produce_registry())).unwrap();
+        assert!(
+            out["error"].as_str().unwrap().contains("unknown auth_type"),
+            "{out}"
+        );
         let req = json!({ "auth_type": "toylist", "id_commitment_hex": "11".repeat(32) });
-        let out: Value = serde_json::from_str(&dispatch_produce(&req.to_string(), &produce_registry())).unwrap();
-        assert!(out["error"].as_str().unwrap().contains("<scheme>-<authoriser>"), "{out}");
+        let out: Value =
+            serde_json::from_str(&dispatch_produce(&req.to_string(), &produce_registry())).unwrap();
+        assert!(
+            out["error"]
+                .as_str()
+                .unwrap()
+                .contains("<scheme>-<authoriser>"),
+            "{out}"
+        );
     }
 
     #[test]
     fn operator_mistakes_are_errors_requester_mistakes_are_rejects() {
         let p = produce("toy-list", json!({}));
         let v = verify("toy-list", &p, 1, json!({}));
-        assert!(v["error"].as_str().unwrap().contains("config.allowlist"), "{v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("config.allowlist"),
+            "{v}"
+        );
         let v = verify("toy-stamp", &p, 1, json!({ "broken": 1 }));
-        assert!(v["error"].as_str().unwrap().contains("operator mistake"), "{v}");
+        assert!(
+            v["error"].as_str().unwrap().contains("operator mistake"),
+            "{v}"
+        );
 
         let v = verify("toy-list", "zz", 1, listed());
-        assert!(v["reason"].as_str().unwrap().starts_with("payload hex:"), "{v}");
+        assert!(
+            v["reason"].as_str().unwrap().starts_with("payload hex:"),
+            "{v}"
+        );
         let v = verify("toy-list", "02", 1, listed());
         assert!(v["reason"].as_str().unwrap().contains("too short"), "{v}");
         let mut old = hex::decode(&p).unwrap();
@@ -348,16 +441,32 @@ mod tests {
     #[test]
     fn a_wrong_signature_audience_or_evidence_is_rejected() {
         let p = produce("toy-list", json!({ "audience": "a" }));
-        let v = verify("toy-list", &p, 1, json!({ "allowlist": [hex::encode(KEY)], "audience": "b" }));
+        let v = verify(
+            "toy-list",
+            &p,
+            1,
+            json!({ "allowlist": [hex::encode(KEY)], "audience": "b" }),
+        );
         assert_eq!(v["reason"], reason::SIG_FAILED, "{v}");
         let mut tampered = hex::decode(&p).unwrap();
         tampered[33] ^= 0xff;
-        let v = verify("toy-list", &hex::encode(&tampered), 1, json!({ "allowlist": [hex::encode(KEY)], "audience": "a" }));
+        let v = verify(
+            "toy-list",
+            &hex::encode(&tampered),
+            1,
+            json!({ "allowlist": [hex::encode(KEY)], "audience": "a" }),
+        );
         assert_eq!(v["reason"], reason::SIG_FAILED);
 
-        let p = produce("toy-stamp", json!({ "audience": "stamped", "stamp": "xxxx" }));
+        let p = produce(
+            "toy-stamp",
+            json!({ "audience": "stamped", "stamp": "xxxx" }),
+        );
         let v = verify("toy-stamp", &p, 1, json!({}));
-        assert_eq!(v["reason"], "bad stamp", "the evidence verified (it is bound) but is refused");
+        assert_eq!(
+            v["reason"], "bad stamp",
+            "the evidence verified (it is bound) but is refused"
+        );
     }
 
     #[test]
@@ -366,10 +475,21 @@ mod tests {
         let p = produce("toy-list", json!({}));
         let mut tampered = hex::decode(&p).unwrap();
         tampered[33] ^= 0xff;
-        let v = verify("toy-list", &hex::encode(&tampered), 1, json!({ "allowlist": ["00".repeat(32)] }));
-        assert!(v["reason"].as_str().unwrap().contains("not allowlisted"), "{v}");
+        let v = verify(
+            "toy-list",
+            &hex::encode(&tampered),
+            1,
+            json!({ "allowlist": ["00".repeat(32)] }),
+        );
+        assert!(
+            v["reason"].as_str().unwrap().contains("not allowlisted"),
+            "{v}"
+        );
         // stamp (after): the signature is checked first.
-        let p = produce("toy-stamp", json!({ "audience": "stamped", "stamp": "xxxx" }));
+        let p = produce(
+            "toy-stamp",
+            json!({ "audience": "stamped", "stamp": "xxxx" }),
+        );
         let mut tampered = hex::decode(&p).unwrap();
         tampered[33] ^= 0xff;
         let v = verify("toy-stamp", &hex::encode(&tampered), 1, json!({}));
@@ -379,10 +499,21 @@ mod tests {
     #[test]
     fn produce_errors_name_the_callers_problem() {
         let req = json!({ "auth_type": "toy-list", "id_commitment_hex": "11".repeat(31) });
-        let out: Value = serde_json::from_str(&dispatch_produce(&req.to_string(), &produce_registry())).unwrap();
-        assert!(out["error"].as_str().unwrap().starts_with("id_commitment_hex"), "{out}");
+        let out: Value =
+            serde_json::from_str(&dispatch_produce(&req.to_string(), &produce_registry())).unwrap();
+        assert!(
+            out["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("id_commitment_hex"),
+            "{out}"
+        );
         let req = json!({ "auth_type": "toy-list", "id_commitment_hex": "11".repeat(32), "args": { "rate_max": "x" } });
-        let out: Value = serde_json::from_str(&dispatch_produce(&req.to_string(), &produce_registry())).unwrap();
-        assert!(out["error"].as_str().unwrap().starts_with("rate_max"), "{out}");
+        let out: Value =
+            serde_json::from_str(&dispatch_produce(&req.to_string(), &produce_registry())).unwrap();
+        assert!(
+            out["error"].as_str().unwrap().starts_with("rate_max"),
+            "{out}"
+        );
     }
 }

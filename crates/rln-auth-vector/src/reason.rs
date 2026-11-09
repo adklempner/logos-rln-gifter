@@ -9,7 +9,8 @@ pub const SIG_FAILED: &str = "signature verification failed";
 pub const ALLOWLIST_EMPTY: &str = "config.allowlist is empty — nothing can verify";
 pub const ENTRIES_NOT_STRINGS: &str = "config.allowlist entries must be strings";
 /// The host's libp2p bridge did not report the requester's peer id.
-pub const TRANSPORT_PEER_UNKNOWN: &str = "transport peer id unavailable: the host's libp2p bridge reports none";
+pub const TRANSPORT_PEER_UNKNOWN: &str =
+    "transport peer id unavailable: the host's libp2p bridge reports none";
 
 pub fn sig_failed(detail: impl Display) -> String {
     format!("{SIG_FAILED}: {detail}")

@@ -6,7 +6,10 @@
 use std::any::Any;
 
 use keycard_attest::attest::{nullifier, recover_ca};
-use rln_auth_vector::{downcast_identity, parse_audience, strip_0x, Authoriser, Cfg, Check, Evidence, Identity, Outcome, Scheme};
+use rln_auth_vector::{
+    downcast_identity, parse_audience, strip_0x, Authoriser, Cfg, Check, Evidence, Identity,
+    Outcome, Scheme,
+};
 use serde_json::Value;
 
 use crate::scheme::keycard::{KeycardIdentity, NAME as KEYCARD};
@@ -26,8 +29,11 @@ pub fn parse_trusted_cas(raw: Option<&Value>) -> Result<Vec<[u8; 33]>, String> {
         .ok_or("config.trusted_cas (array of 33-byte CA pubkey hex) is required")?;
     let mut cas = Vec::with_capacity(arr.len());
     for e in arr {
-        let s = e.as_str().ok_or("config.trusted_cas entries must be hex strings")?;
-        let bytes = hex::decode(strip_0x(s)).map_err(|e| format!("config.trusted_cas entry {s:?}: {e}"))?;
+        let s = e
+            .as_str()
+            .ok_or("config.trusted_cas entries must be hex strings")?;
+        let bytes =
+            hex::decode(strip_0x(s)).map_err(|e| format!("config.trusted_cas entry {s:?}: {e}"))?;
         let ca: [u8; 33] = bytes
             .as_slice()
             .try_into()
@@ -56,7 +62,9 @@ impl Authoriser for Attestation {
         }))
     }
     fn audience<'a>(&self, cfg: &'a dyn Any) -> &'a str {
-        cfg.downcast_ref::<Config>().map(|c| c.audience.as_str()).unwrap_or("")
+        cfg.downcast_ref::<Config>()
+            .map(|c| c.audience.as_str())
+            .unwrap_or("")
     }
     fn decode_evidence<'a>(&self, rest: &'a [u8]) -> Outcome<(Evidence, &'a [u8])> {
         Outcome::Ok((Box::new(()), rest))
@@ -65,14 +73,23 @@ impl Authoriser for Attestation {
         Vec::new()
     }
     fn authorise(&self, cfg: &dyn Any, id: &dyn Identity, _ev: &dyn Any) -> Check<()> {
-        let cfg = cfg.downcast_ref::<Config>().ok_or("attestation: config is not an attestation config")?;
-        let card = downcast_identity::<KeycardIdentity>(id).ok_or("attestation: identity is not a keycard identity")?;
+        let cfg = cfg
+            .downcast_ref::<Config>()
+            .ok_or("attestation: config is not an attestation config")?;
+        let card = downcast_identity::<KeycardIdentity>(id)
+            .ok_or("attestation: identity is not a keycard identity")?;
         let ca = match recover_ca(&card.ident_pub, &card.ca_sig) {
             Ok(ca) => ca,
-            Err(e) => return Ok(Outcome::Reject(format!("attestation verification failed: {e}"))),
+            Err(e) => {
+                return Ok(Outcome::Reject(format!(
+                    "attestation verification failed: {e}"
+                )))
+            }
         };
         if !cfg.trusted_cas.contains(&ca) {
-            return Ok(Outcome::Reject("attestation verification failed: attestation CA is not trusted".into()));
+            return Ok(Outcome::Reject(
+                "attestation verification failed: attestation CA is not trusted".into(),
+            ));
         }
         Ok(Outcome::Ok(()))
     }

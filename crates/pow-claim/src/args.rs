@@ -78,7 +78,9 @@ impl ProduceArgs {
     /// RLN membership module may stringify `auth_args`). An empty string or
     /// `null` means defaults.
     pub fn parse(raw: Option<&Value>) -> Result<ProduceArgs, String> {
-        let Some(o) = args_object(raw)? else { return Ok(Self::default()) };
+        let Some(o) = args_object(raw)? else {
+            return Ok(Self::default());
+        };
         let d = Self::default();
         let node_url = opt_str(&o, "node_url")?
             .map(|s| s.trim().trim_end_matches('/').to_string())
@@ -122,8 +124,14 @@ mod tests {
     #[test]
     fn absent_and_null_give_defaults() {
         assert_eq!(ProduceArgs::parse(None).unwrap(), ProduceArgs::default());
-        assert_eq!(ProduceArgs::parse(Some(&Value::Null)).unwrap(), ProduceArgs::default());
-        assert_eq!(ProduceArgs::parse(Some(&json!(""))).unwrap(), ProduceArgs::default());
+        assert_eq!(
+            ProduceArgs::parse(Some(&Value::Null)).unwrap(),
+            ProduceArgs::default()
+        );
+        assert_eq!(
+            ProduceArgs::parse(Some(&json!(""))).unwrap(),
+            ProduceArgs::default()
+        );
         let d = ProduceArgs::default();
         assert_eq!(d.node_url, "http://127.0.0.1:8080");
         assert_eq!(d.rate_max, 100);
@@ -153,7 +161,13 @@ mod tests {
 
     #[test]
     fn hex_validation_names_field() {
-        for f in ["claim_block_id", "pow_nullifier", "spend_block_id", "spend_tx_hash", "claim_address"] {
+        for f in [
+            "claim_block_id",
+            "pow_nullifier",
+            "spend_block_id",
+            "spend_tx_hash",
+            "claim_address",
+        ] {
             let e = ProduceArgs::parse(Some(&json!({ f: "abc" }))).unwrap_err();
             assert!(e.starts_with(f), "{e}");
             let e = ProduceArgs::parse(Some(&json!({ f: "zz".repeat(32) }))).unwrap_err();

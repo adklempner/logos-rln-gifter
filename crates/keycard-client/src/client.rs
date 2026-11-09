@@ -12,7 +12,10 @@ use std::time::Duration;
 pub fn reader_card_present() -> Result<bool, String> {
     let ctx = pcsc::Context::establish(pcsc::Scope::User).map_err(|e| format!("pcsc ctx: {e}"))?;
     let mut readers_buf = [0u8; 2048];
-    let readers: Vec<&std::ffi::CStr> = ctx.list_readers(&mut readers_buf).map_err(|e| format!("readers: {e}"))?.collect();
+    let readers: Vec<&std::ffi::CStr> = ctx
+        .list_readers(&mut readers_buf)
+        .map_err(|e| format!("readers: {e}"))?
+        .collect();
     let reader = match readers.first() {
         Some(r) => *r,
         None => return Ok(false),
@@ -65,9 +68,13 @@ pub struct Keycard {
 
 impl Keycard {
     pub fn connect() -> Result<Self, String> {
-        let ctx = pcsc::Context::establish(pcsc::Scope::User).map_err(|e| format!("pcsc ctx: {e}"))?;
+        let ctx =
+            pcsc::Context::establish(pcsc::Scope::User).map_err(|e| format!("pcsc ctx: {e}"))?;
         let mut buf = [0u8; 2048];
-        let readers: Vec<_> = ctx.list_readers(&mut buf).map_err(|e| format!("readers: {e}"))?.collect();
+        let readers: Vec<_> = ctx
+            .list_readers(&mut buf)
+            .map_err(|e| format!("readers: {e}"))?
+            .collect();
         let reader = *readers.first().ok_or("no reader")?;
         let card = ctx
             .connect(reader, pcsc::ShareMode::Shared, pcsc::Protocols::ANY)
@@ -93,7 +100,10 @@ impl Keycard {
     fn transmit(&self, cmd: &Command) -> Result<Response, String> {
         let raw = cmd.serialize();
         let mut buf = [0u8; 1024];
-        let resp = self.card.transmit(&raw, &mut buf).map_err(|e| format!("transmit: {e}"))?;
+        let resp = self
+            .card
+            .transmit(&raw, &mut buf)
+            .map_err(|e| format!("transmit: {e}"))?;
         Ok(parse_response(resp))
     }
 
@@ -158,7 +168,13 @@ impl Keycard {
     pub fn pair(&mut self, pairing_pass: &str) -> Result<(), String> {
         let mut challenge = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut challenge);
-        let resp = self.transmit(&Command::new(CLA_GP, INS_PAIR, P1_PAIR_FIRST, 0, challenge.to_vec()))?;
+        let resp = self.transmit(&Command::new(
+            CLA_GP,
+            INS_PAIR,
+            P1_PAIR_FIRST,
+            0,
+            challenge.to_vec(),
+        ))?;
         if resp.sw == 0x6A84 {
             return Err("no available pairing slots".into());
         }
@@ -172,7 +188,13 @@ impl Keycard {
             return Err("invalid card cryptogram (wrong pairing password?)".into());
         }
         let client_cryptogram = crypto::sha256(&[&secret_hash, card_challenge]);
-        let resp = self.transmit(&Command::new(CLA_GP, INS_PAIR, P1_PAIR_FINAL, 0, client_cryptogram.to_vec()))?;
+        let resp = self.transmit(&Command::new(
+            CLA_GP,
+            INS_PAIR,
+            P1_PAIR_FINAL,
+            0,
+            client_cryptogram.to_vec(),
+        ))?;
         if resp.sw != SW_OK {
             return Err(format!("PAIR step2 SW {:04X}", resp.sw));
         }
@@ -192,14 +214,21 @@ impl Keycard {
         if resp.sw != SW_OK {
             return Err(format!("OPEN_SECURE_CHANNEL SW {:04X}", resp.sw));
         }
-        let (enc, mac, iv) = crypto::derive_session_keys(&self.sc.secret, &self.pairing_key, &resp.data);
+        let (enc, mac, iv) =
+            crypto::derive_session_keys(&self.sc.secret, &self.pairing_key, &resp.data);
         self.sc.enc_key = enc;
         self.sc.mac_key = mac;
         self.sc.iv = iv;
         self.sc.open = true;
         let mut data = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut data);
-        let resp = self.send_sc(Command::new(CLA_GP, INS_MUTUALLY_AUTHENTICATE, 0, 0, data.to_vec()))?;
+        let resp = self.send_sc(Command::new(
+            CLA_GP,
+            INS_MUTUALLY_AUTHENTICATE,
+            0,
+            0,
+            data.to_vec(),
+        ))?;
         if resp.sw != SW_OK {
             return Err(format!("MUTUALLY_AUTHENTICATE SW {:04X}", resp.sw));
         }
@@ -207,7 +236,13 @@ impl Keycard {
     }
 
     pub fn verify_pin(&mut self, pin: &str) -> Result<(), String> {
-        let resp = self.send_sc(Command::new(CLA_GP, INS_VERIFY_PIN, 0, 0, pin.as_bytes().to_vec()))?;
+        let resp = self.send_sc(Command::new(
+            CLA_GP,
+            INS_VERIFY_PIN,
+            0,
+            0,
+            pin.as_bytes().to_vec(),
+        ))?;
         if resp.sw != SW_OK {
             if (resp.sw & 0x63C0) == 0x63C0 {
                 return Err(format!("wrong PIN, {} attempts left", resp.sw & 0x000F));
@@ -222,7 +257,13 @@ impl Keycard {
         for s in decode_path(path)? {
             data.extend_from_slice(&s.to_be_bytes());
         }
-        let resp = self.send_sc(Command::new(CLA_GP, INS_EXPORT_KEY, P1_EXPORT_DERIVE, P2_EXPORT_PRIV_AND_PUB, data))?;
+        let resp = self.send_sc(Command::new(
+            CLA_GP,
+            INS_EXPORT_KEY,
+            P1_EXPORT_DERIVE,
+            P2_EXPORT_PRIV_AND_PUB,
+            data,
+        ))?;
         if resp.sw != SW_OK {
             return Err(format!("EXPORT_KEY SW {:04X}", resp.sw));
         }
@@ -259,7 +300,10 @@ fn decode_path(path: &str) -> Result<Vec<u32>, String> {
             continue;
         }
         let hardened = p.ends_with('\'') || p.ends_with('h') || p.ends_with('H');
-        let mut n: u32 = p.trim_end_matches(['\'', 'h', 'H']).parse().map_err(|_| format!("bad path segment {p}"))?;
+        let mut n: u32 = p
+            .trim_end_matches(['\'', 'h', 'H'])
+            .parse()
+            .map_err(|_| format!("bad path segment {p}"))?;
         if hardened {
             n |= 0x8000_0000;
         }

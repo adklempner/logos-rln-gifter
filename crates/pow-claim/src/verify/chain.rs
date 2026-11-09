@@ -4,13 +4,16 @@
 //! problem); anything that depends on the payload or chain content = reject.
 
 use crate::{
+    claim::Claim,
     node::NodeApi,
     ownership::{bytes32, note_id_hex, tx_event, Path},
-    claim::Claim,
 };
 use serde_json::Value;
 
-use super::{config::Config, ticket::{ClaimOp, OPCODE_CLAIM_POW_REWARD}};
+use super::{
+    config::Config,
+    ticket::{ClaimOp, OPCODE_CLAIM_POW_REWARD},
+};
 
 /// Outcome of the chain checks. `outcome` is `Ok(path)` on accept or
 /// `Err(reason)` on reject.
@@ -31,20 +34,26 @@ fn eq32(v: &Value, want: &[u8; 32]) -> bool {
 /// Path B: an opcode-0 Transfer in `tx` whose `inputs` contain `note_id_hex`
 /// and whose `outputs` pay `k` (`pk == K`) at least `min_payout`.
 pub fn spent_to_k(tx: &Value, note_id_hex: &str, k: &[u8; 32], min_payout: u64) -> bool {
-    let Some(ops) = tx["mantle_tx"]["ops"].as_array() else { return false };
-    ops.iter().filter(|op| op["opcode"].as_u64() == Some(0)).any(|op| {
-        let p = &op["payload"];
-        let spends = p["inputs"].as_array().is_some_and(|ins| {
-            ins.iter()
-                .any(|i| i.as_str().is_some_and(|s| s.eq_ignore_ascii_case(note_id_hex)))
-        });
-        spends
-            && p["outputs"].as_array().is_some_and(|outs| {
-                outs.iter().any(|o| {
-                    eq32(&o["pk"], k) && o["value"].as_u64().is_some_and(|v| v >= min_payout)
+    let Some(ops) = tx["mantle_tx"]["ops"].as_array() else {
+        return false;
+    };
+    ops.iter()
+        .filter(|op| op["opcode"].as_u64() == Some(0))
+        .any(|op| {
+            let p = &op["payload"];
+            let spends = p["inputs"].as_array().is_some_and(|ins| {
+                ins.iter().any(|i| {
+                    i.as_str()
+                        .is_some_and(|s| s.eq_ignore_ascii_case(note_id_hex))
                 })
-            })
-    })
+            });
+            spends
+                && p["outputs"].as_array().is_some_and(|outs| {
+                    outs.iter().any(|o| {
+                        eq32(&o["pk"], k) && o["value"].as_u64().is_some_and(|v| v >= min_payout)
+                    })
+                })
+        })
 }
 
 /// Steps 3–8 for an already signature-checked payload.
@@ -82,7 +91,10 @@ fn run(
     let Some(block) = node.block(&bid).map_err(node_err)? else {
         reject!("claim block unknown to node: {bid}");
     };
-    if !block["header"]["id"].as_str().is_some_and(|s| s.eq_ignore_ascii_case(&bid)) {
+    if !block["header"]["id"]
+        .as_str()
+        .is_some_and(|s| s.eq_ignore_ascii_case(&bid))
+    {
         reject!("claim block {bid}: node returned a block with a different id");
     }
     let Some(s) = block["header"]["slot"].as_u64() else {
@@ -94,10 +106,11 @@ fn run(
 
     // 5. Canonical: in the immutable chain at its slot.
     let imm = node.immutable_blocks(s, s).map_err(node_err)?;
-    if !imm
-        .iter()
-        .any(|b| b["header"]["id"].as_str().is_some_and(|x| x.eq_ignore_ascii_case(&bid)))
-    {
+    if !imm.iter().any(|b| {
+        b["header"]["id"]
+            .as_str()
+            .is_some_and(|x| x.eq_ignore_ascii_case(&bid))
+    }) {
         reject!("claim block not canonical (not in the immutable chain at slot {s})");
     }
 
@@ -118,12 +131,17 @@ fn run(
     };
     let Some(tx) = block["transactions"].as_array().and_then(|txs| {
         txs.iter().find(|t| {
-            t["mantle_tx"]["hash"].as_str().is_some_and(|h| h.eq_ignore_ascii_case(tx_hash))
+            t["mantle_tx"]["hash"]
+                .as_str()
+                .is_some_and(|h| h.eq_ignore_ascii_case(tx_hash))
         })
     }) else {
         reject!("claim tx {tx_hash} not found in the claim block");
     };
-    let ops = tx["mantle_tx"]["ops"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let ops = tx["mantle_tx"]["ops"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     let Some(op) = ops
         .iter()
         .filter(|o| o["opcode"].as_u64() == Some(OPCODE_CLAIM_POW_REWARD))

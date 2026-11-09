@@ -14,7 +14,12 @@ pub struct Record {
 }
 
 /// `result`: `Ok(Ok(()))` accept, `Ok(Err(reason))` reject, `Err(e)` operator error.
-pub fn record(audit_log: Option<&str>, rec: &Record, result: &Result<Result<(), String>, String>, ms: u128) {
+pub fn record(
+    audit_log: Option<&str>,
+    rec: &Record,
+    result: &Result<Result<(), String>, String>,
+    ms: u128,
+) {
     let (verdict, reason) = match result {
         Ok(Ok(())) => ("accept", None),
         Ok(Err(r)) => ("reject", Some(r.clone())),
@@ -25,7 +30,10 @@ pub fn record(audit_log: Option<&str>, rec: &Record, result: &Result<Result<(), 
     eprintln!(
         "pow_claim_auth: verdict={verdict} node={} nullifier={nul} path={path} reason={} ms={ms}",
         if rec.node.is_empty() { "-" } else { &rec.node },
-        reason.as_deref().map(|r| format!("{r:?}")).unwrap_or_else(|| "-".into()),
+        reason
+            .as_deref()
+            .map(|r| format!("{r:?}"))
+            .unwrap_or_else(|| "-".into()),
     );
     let Some(p) = audit_log else { return };
     let ts = std::time::SystemTime::now()

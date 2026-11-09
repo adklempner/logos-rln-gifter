@@ -47,14 +47,24 @@ pub fn nullifier(ident_pub: &[u8; 33]) -> [u8; 32] {
 }
 
 fn read_len(buf: &[u8], i: usize) -> Result<(usize, usize), Error> {
-    let l0 = *buf.get(i).ok_or_else(|| Error::InvalidInput("tlv length truncated".into()))?;
+    let l0 = *buf
+        .get(i)
+        .ok_or_else(|| Error::InvalidInput("tlv length truncated".into()))?;
     if l0 < 0x80 {
         Ok((l0 as usize, 1))
     } else if l0 == 0x81 {
-        Ok((*buf.get(i + 1).ok_or_else(|| Error::InvalidInput("tlv len81".into()))? as usize, 2))
+        Ok((
+            *buf.get(i + 1)
+                .ok_or_else(|| Error::InvalidInput("tlv len81".into()))? as usize,
+            2,
+        ))
     } else if l0 == 0x82 {
-        let hi = *buf.get(i + 1).ok_or_else(|| Error::InvalidInput("tlv len82".into()))? as usize;
-        let lo = *buf.get(i + 2).ok_or_else(|| Error::InvalidInput("tlv len82".into()))? as usize;
+        let hi = *buf
+            .get(i + 1)
+            .ok_or_else(|| Error::InvalidInput("tlv len82".into()))? as usize;
+        let lo = *buf
+            .get(i + 2)
+            .ok_or_else(|| Error::InvalidInput("tlv len82".into()))? as usize;
         Ok(((hi << 8) | lo, 3))
     } else {
         Err(Error::InvalidInput("unsupported tlv length form".into()))
@@ -82,7 +92,9 @@ fn find_tag(buf: &[u8], tag: u8) -> Result<(&[u8], &[u8]), Error> {
 /// `A0` template), so a caller can split it off a longer payload.
 pub fn tlv_len(buf: &[u8]) -> Result<usize, Error> {
     if buf.first() != Some(&TAG_SIGNATURE_TEMPLATE) {
-        return Err(Error::InvalidInput("attestation must start with the A0 template".into()));
+        return Err(Error::InvalidInput(
+            "attestation must start with the A0 template".into(),
+        ));
     }
     let (vlen, lhdr) = read_len(buf, 1)?;
     let end = 1 + lhdr + vlen;
@@ -107,7 +119,11 @@ pub fn parse_attestation(tlv: &[u8]) -> Result<Attestation, Error> {
     let (_, der_full) = find_tag(template, TAG_DER_SEQUENCE)?;
     let challenge_sig = Signature::from_der(der_full)
         .map_err(|e| Error::InvalidInput(format!("challenge sig DER: {e}")))?;
-    Ok(Attestation { ident_pub, ca_sig, challenge_sig })
+    Ok(Attestation {
+        ident_pub,
+        ca_sig,
+        challenge_sig,
+    })
 }
 
 /// The CA that signed `ident_pub` (compressed), recovered from `ca_sig`.
@@ -131,7 +147,9 @@ pub fn verify_challenge(att: &Attestation, challenge: &[u8; 32]) -> Result<(), E
     // The card's JavaCard ECDSA emits high-S signatures; k256's verifier rejects
     // non-canonical S, so normalize to low-S before verifying the raw challenge.
     let sig = att.challenge_sig.normalize_s().unwrap_or(att.challenge_sig);
-    ident.verify_prehash(challenge, &sig).map_err(|_| Error::InvalidSignature)
+    ident
+        .verify_prehash(challenge, &sig)
+        .map_err(|_| Error::InvalidSignature)
 }
 
 /// Both halves: the cert signature recovers a CA in `trusted_cas` and the
@@ -179,10 +197,12 @@ mod tests {
     #[test]
     fn golden_vector_verifies_raw_challenge() {
         let att = parse_attestation(&hex::decode(GOLDEN_TLV).unwrap()).unwrap();
-        let null =
-            verify_attestation(&att, &[arr33(TEST_CA)], &arr32(GOLDEN_CHALLENGE)).unwrap();
+        let null = verify_attestation(&att, &[arr33(TEST_CA)], &arr32(GOLDEN_CHALLENGE)).unwrap();
         assert_eq!(null, nullifier(&att.ident_pub));
-        assert_eq!(recover_ca(&att.ident_pub, &att.ca_sig).unwrap(), arr33(TEST_CA));
+        assert_eq!(
+            recover_ca(&att.ident_pub, &att.ca_sig).unwrap(),
+            arr33(TEST_CA)
+        );
         verify_challenge(&att, &arr32(GOLDEN_CHALLENGE)).unwrap();
     }
 
@@ -202,7 +222,10 @@ mod tests {
         bad[0] ^= 0x01;
         let err = verify_attestation(&att, &[arr33(TEST_CA)], &bad).unwrap_err();
         assert_eq!(err, Error::InvalidSignature);
-        assert_eq!(verify_challenge(&att, &[0x11; 32]).unwrap_err(), Error::InvalidSignature);
+        assert_eq!(
+            verify_challenge(&att, &[0x11; 32]).unwrap_err(),
+            Error::InvalidSignature
+        );
     }
 
     #[test]

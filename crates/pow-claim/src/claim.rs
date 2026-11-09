@@ -31,7 +31,11 @@ fn take32(b: &[u8], off: &mut usize) -> [u8; 32] {
 impl Evidence {
     pub fn encode(&self) -> Vec<u8> {
         let mut v = Vec::with_capacity(EVIDENCE_WITH_SPEND);
-        v.push(if self.spend.is_some() { FLAG_SPEND_LOCATOR } else { 0 });
+        v.push(if self.spend.is_some() {
+            FLAG_SPEND_LOCATOR
+        } else {
+            0
+        });
         v.extend_from_slice(&self.claim_block_id);
         v.extend_from_slice(&self.pow_nullifier);
         if let Some((b, t)) = &self.spend {
@@ -48,9 +52,16 @@ impl Evidence {
             return Err(format!("evidence: unknown flags 0x{flags:02x}"));
         }
         let has_spend = flags & FLAG_SPEND_LOCATOR != 0;
-        let want = if has_spend { EVIDENCE_WITH_SPEND } else { EVIDENCE_BASE };
+        let want = if has_spend {
+            EVIDENCE_WITH_SPEND
+        } else {
+            EVIDENCE_BASE
+        };
         if b.len() < want {
-            return Err(format!("evidence: {} bytes, want {want} for flags 0x{flags:02x}", b.len()));
+            return Err(format!(
+                "evidence: {} bytes, want {want} for flags 0x{flags:02x}",
+                b.len()
+            ));
         }
         let mut off = 1;
         let claim_block_id = take32(b, &mut off);
@@ -60,7 +71,14 @@ impl Evidence {
             let st = take32(b, &mut off);
             (sb, st)
         });
-        Ok((Evidence { claim_block_id, pow_nullifier, spend }, &b[off..]))
+        Ok((
+            Evidence {
+                claim_block_id,
+                pow_nullifier,
+                spend,
+            },
+            &b[off..],
+        ))
     }
 }
 
