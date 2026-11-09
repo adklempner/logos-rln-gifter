@@ -184,6 +184,11 @@ fn on_owner_thread() -> bool {
 /// deferring: a config-named module that can't be opened must fail the
 /// configuring call, not every later request.
 pub fn ensure_client(target: &str) -> Result<(), String> {
+    // A test thread with the fake installed reaches every target through it.
+    #[cfg(test)]
+    if fake::installed() {
+        return Ok(());
+    }
     if cached_client(target).is_some() {
         return Ok(());
     }
@@ -489,6 +494,10 @@ pub(crate) mod fake {
 
     pub(crate) fn methods() -> Vec<String> {
         calls().into_iter().map(|(m, _)| m).collect()
+    }
+
+    pub(crate) fn installed() -> bool {
+        FAKE.with(|f| f.borrow().is_some())
     }
 
     pub(crate) fn now() -> Option<u64> {

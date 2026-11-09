@@ -5,9 +5,9 @@
 // liblogos_lez_rln_module. A single serialized worker drains inbound streams so
 // the funded payer's tx nonce stays ordered.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 use rln_auth_vector::VerifyRequestRef;
 use serde_json::{json, Value};
@@ -72,7 +72,6 @@ struct ServerCfg {
     /// module ships none of its own, so a new allocation-auth strategy needs
     /// zero changes here. Empty map = open allocator (auth skipped entirely).
     auth_verifiers: HashMap<String, (String, Option<Value>)>,
-    nullifiers_path: String,
 }
 
 impl ServerCfg {
@@ -154,7 +153,10 @@ fn parse_registries(
 }
 
 static SERVER: Mutex<Option<ServerCfg>> = Mutex::new(None);
-static CONSUMED_NULLIFIERS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+// OWNERSHIP: one store for the process, shared by `serve` on the owner thread
+// (merge, file change) and the worker (reserve, release); its methods do file
+// IO only, so a wait on this lock never stalls the owner thread's event loop.
+static NULLIFIERS: LazyLock<Mutex<auth::NullifierStore>> = LazyLock::new(Mutex::default);
 static MOUNTED: AtomicBool = AtomicBool::new(false);
 /// Whether the serve worker runs; from then on only it may call libp2p_module.
 static SERVING: AtomicBool = AtomicBool::new(false);
@@ -348,8 +350,7 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
     let nullifiers_path = a
         .get("consumedNullifiersPath")
         .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
+        .unwrap_or("");
     let advertise_wanted = match a.get("advertise") {
         None | Some(Value::Null) => None,
         Some(Value::Bool(b)) => Some(*b),
@@ -401,28 +402,16 @@ pub fn serve(args_json: &str) -> Result<Value, String> {
         _ => Some(service_data(&served_pairs(&served, &auth_verifiers))?),
     };
 
-    // Merge, never replace: a re-serve (config refresh) may only ADD replay
-    // knowledge, or in-memory reservations would be forgotten. A re-serve
-    // that names another file carries the spent set into it, or a restart
-    // on the new file would forget everything spent under the old one.
-    {
-        let mut g = lock(&CONSUMED_NULLIFIERS);
-        let set = g.get_or_insert_with(HashSet::new);
-        set.extend(
-            auth::load_nullifiers(&nullifiers_path).map_err(|e| format!("nullifier store: {e}"))?,
-        );
-        let previous_path = lock(&SERVER).as_ref().map(|c| c.nullifiers_path.clone());
-        if previous_path.is_some_and(|p| p != nullifiers_path) {
-            auth::append_missing(&nullifiers_path, set)
-                .map_err(|e| format!("nullifier store: {e}"))?;
-        }
-    }
+    // Merged into the spent set, never replacing it; a file other than the
+    // current one inherits the set and takes every later reservation.
+    lock(&NULLIFIERS)
+        .open(nullifiers_path)
+        .map_err(|e| format!("nullifier store: {e}"))?;
     *lock(&SERVER) = Some(ServerCfg {
         default_config,
         registries,
         wallet,
         auth_verifiers,
-        nullifiers_path,
     });
 
     let mut reply = json!({ "mounted": true, "registries": served, "advertised": false });
@@ -707,9 +696,8 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
                 );
             }
             let nul = rln_auth_vector::namespaced_nullifier(&registry, &auth_type, &nul);
-            let spent = lock(&CONSUMED_NULLIFIERS)
-                .as_ref()
-                .is_some_and(|set| set.contains(&nul));
+            // The store is unlocked again before any module call.
+            let spent = lock(&NULLIFIERS).is_spent(&nul);
             if spent {
                 // The credential bought a membership already. If it bought
                 // THIS commitment's — a retry after a reply the client never
@@ -730,24 +718,25 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
                     format!("credential already used: {nul}"),
                 );
             }
-            let mut g = lock(&CONSUMED_NULLIFIERS);
-            let set = g.get_or_insert_with(HashSet::new);
-            if !set.insert(nul.clone()) {
-                return failure_response(
-                    req.request_id,
-                    false,
-                    format!("credential already used: {nul}"),
-                );
-            }
-            // A reservation that never reached disk does not survive a
-            // restart, so nothing is registered against it.
-            if let Err(e) = auth::append_nullifier(&cfg.nullifiers_path, &nul) {
-                set.remove(&nul);
-                return failure_response(
-                    req.request_id,
-                    true,
-                    RegisterError::NotSubmitted(format!("nullifier store: {e}")).message(),
-                );
+            let reserved = lock(&NULLIFIERS).reserve(&nul);
+            match reserved {
+                Ok(true) => {}
+                Ok(false) => {
+                    return failure_response(
+                        req.request_id,
+                        false,
+                        format!("credential already used: {nul}"),
+                    )
+                }
+                // A reservation that never reached disk does not survive a
+                // restart, so nothing is registered against it.
+                Err(e) => {
+                    return failure_response(
+                        req.request_id,
+                        true,
+                        RegisterError::NotSubmitted(format!("nullifier store: {e}")).message(),
+                    )
+                }
             }
             authorized_nullifier = Some(nul);
         }
@@ -767,13 +756,11 @@ fn handle_request(buf: &[u8], peer_id: Option<&str>) -> RlnGifterResponse {
                 match e {
                     // Nothing reached the chain: the credential is unspent.
                     RegisterError::NotSubmitted(_) => {
-                        if let Some(set) = lock(&CONSUMED_NULLIFIERS).as_mut() {
-                            set.remove(nul);
-                        }
                         // The release stays in memory either way; a store
                         // that kept the line keeps the credential spent
                         // across a restart, and the reply says so.
-                        if let Err(store) = auth::remove_nullifier(&cfg.nullifiers_path, nul) {
+                        let released = lock(&NULLIFIERS).release(nul);
+                        if let Err(store) = released {
                             store_note = format!("; nullifier store: {store}");
                         }
                     }
@@ -964,7 +951,6 @@ mod tests {
             registries,
             wallet: String::new(),
             auth_verifiers: HashMap::new(),
-            nullifiers_path: String::new(),
         }
     }
 
@@ -1412,5 +1398,130 @@ mod tests {
         );
         lp::fake::clear();
         reset_ads();
+    }
+
+    fn tmp(name: &str) -> String {
+        let p =
+            std::env::temp_dir().join(format!("rln-gifter-srv-{}-{}", name, std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        p.to_string_lossy().into_owned()
+    }
+
+    /// `serve` args for an allocator on registry 0x0d accepting vector `t`
+    /// (verifier `verifier_module`), unadvertised, with the store at `store`.
+    fn vector_serve(store: &str) -> String {
+        json!({
+            "config": acct(0xd),
+            "wallet": "w",
+            "advertise": false,
+            "consumedNullifiersPath": store,
+            "authVerifiers": { "t": { "module": "verifier_module" } },
+        })
+        .to_string()
+    }
+
+    fn vector_request(request_id: &str) -> RlnGifterRequest {
+        let mut idc = vec![0xab; 32];
+        idc[31] = 0x0a;
+        RlnGifterRequest {
+            request_id: request_id.into(),
+            identity_commitment: idc,
+            authentication_type: b"t".to_vec(),
+            ..Default::default()
+        }
+    }
+
+    fn failure_text(resp: &RlnGifterResponse) -> String {
+        resp.failure
+            .as_ref()
+            .map(|f| f.error_message.clone())
+            .or_else(|| resp.error.clone())
+            .unwrap_or_default()
+    }
+
+    // The owner thread re-serves with another store file while the worker
+    // waits for the verifier's verdict: the reservation the request makes
+    // afterwards belongs in the new file, or a restart on it grants the
+    // credential a second membership.
+    #[test]
+    fn a_reservation_made_after_a_re_serve_lands_in_the_new_store_file() {
+        let _g = lock(&AD_STATE);
+        reset_ads();
+        let (old, new) = (tmp("reserve-old"), tmp("reserve-new"));
+        let re_serve = vector_serve(&new);
+        lp::fake::install(Box::new(move |_, method, _| match method {
+            rln_auth_vector::VERIFY_METHOD => {
+                let _ = serve(&re_serve);
+                Ok(json!({ "ok": true, "nullifier": " AA " }))
+            }
+            "register_member" => Ok(json!({ "leaf_index": 3 })),
+            "get_membership" => {
+                Ok(json!({ "registered": true, "state": "active", "leaf_index": 3 }))
+            }
+            "mountProtocol" => Err("refused in test".into()),
+            m => Err(format!("unscripted {m}")),
+        }));
+        assert_eq!(
+            serve(&vector_serve(&old)).unwrap_err(),
+            "mountProtocol: refused in test"
+        );
+
+        let resp = handle_request(&vector_request("r1").encode(), Some("peer"));
+        assert!(resp.success.is_some(), "{}", failure_text(&resp));
+        let nul = rln_auth_vector::namespaced_nullifier(&acct(0xd), "t", "aa");
+        assert!(
+            auth::load_nullifiers(&new).unwrap().contains(&nul),
+            "the reservation is in the file serve named last"
+        );
+        assert!(!auth::load_nullifiers(&old).unwrap().contains(&nul));
+
+        *lock(&SERVER) = None;
+        lp::fake::clear();
+        reset_ads();
+        let _ = std::fs::remove_file(&old);
+        let _ = std::fs::remove_file(&new);
+    }
+
+    // The re-serve lands while the registration is in flight; the
+    // registration then reaches nothing on chain. The release takes the line
+    // out of the file serve named last (which inherited it), so a restart on
+    // that file finds the credential unspent.
+    #[test]
+    fn a_release_after_a_re_serve_takes_the_line_out_of_the_new_store_file() {
+        let _g = lock(&AD_STATE);
+        reset_ads();
+        let (old, new) = (tmp("release-old"), tmp("release-new"));
+        let re_serve = vector_serve(&new);
+        lp::fake::install(Box::new(move |_, method, _| match method {
+            rln_auth_vector::VERIFY_METHOD => Ok(json!({ "ok": true, "nullifier": "bb" })),
+            "register_member" => {
+                let _ = serve(&re_serve);
+                Ok(json!({ "error": "full: the registry is full" }))
+            }
+            "mountProtocol" => Err("refused in test".into()),
+            m => Err(format!("unscripted {m}")),
+        }));
+        assert_eq!(
+            serve(&vector_serve(&old)).unwrap_err(),
+            "mountProtocol: refused in test"
+        );
+
+        let refused = "not submitted: register_member refused: full: the registry is full";
+        let resp = handle_request(&vector_request("r2").encode(), Some("peer"));
+        assert_eq!(failure_text(&resp), refused);
+        let nul = rln_auth_vector::namespaced_nullifier(&acct(0xd), "t", "bb");
+        assert!(
+            !auth::load_nullifiers(&new).unwrap().contains(&nul),
+            "the release rewrote the file serve named last"
+        );
+        // Released in memory too: a retry reserves the credential again.
+        let resp = handle_request(&vector_request("r3").encode(), Some("peer"));
+        assert_eq!(failure_text(&resp), refused);
+
+        *lock(&SERVER) = None;
+        lp::fake::clear();
+        reset_ads();
+        let _ = std::fs::remove_file(&old);
+        let _ = std::fs::remove_file(&new);
     }
 }
