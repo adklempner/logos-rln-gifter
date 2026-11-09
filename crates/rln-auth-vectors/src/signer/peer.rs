@@ -22,10 +22,13 @@ impl Signer for PeerSigner {
         Ok(Vec::new())
     }
     fn identity(&self, args: Option<&Value>) -> Result<Box<dyn Identity>, String> {
-        let raw = args_object_cow(args)?
-            .and_then(|o| o.get("peer_id").and_then(Value::as_str).map(str::to_owned))
+        let obj = args_object_cow(args)?;
+        let raw = obj
+            .as_ref()
+            .and_then(|o| o.get("peer_id"))
+            .and_then(Value::as_str)
             .ok_or("peer identity: args.peer_id is required (the node's own, from libp2p_module.peerInfo)")?;
-        Ok(Box::new(PeerId(parse_peer_id(&raw)?)))
+        Ok(Box::new(PeerId(parse_peer_id(raw)?)))
     }
 }
 

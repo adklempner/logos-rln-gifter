@@ -109,9 +109,9 @@ fn cbc_decrypt_raw(cipher: &Aes256, iv: &[u8], data: &[u8]) -> Vec<u8> {
     let mut prev = [0u8; 16];
     prev.copy_from_slice(iv);
     for chunk in data.chunks(16) {
-        #[expect(
+        #[allow(
             deprecated,
-            reason = "aes 0.8 blocks are generic-array 0.14, deprecated as a crate; clone_from_slice keeps the panic on a short final chunk"
+            reason = "generic-array 0.14.9 deprecates the crate; 0.14.7, pinned by some lockfiles, does not"
         )]
         let mut b = aes::Block::clone_from_slice(chunk);
         cipher.decrypt_block(&mut b);
